@@ -3,66 +3,35 @@ import os
 import pandas as pd
 import streamlit as st
 
-import streamlit as st
-import pandas as pd
-import numpy as np
+# ... [Keep your model loading code at the top of the file] ...
 
-# Set page config
-st.set_page_config(page_title="Biopharma AI CQA Predictor", layout="wide")
+# --- START OF SIDEBAR REPLACEMENT ---
+st.sidebar.markdown("### Operator Input Panel")
+st.sidebar.info("Enter precise bioreactor parameters below to simulate a real-time batch prediction.")
 
-st.title("🧬 Biopharmaceutical Explainable AI Platform")
-st.markdown("### MSC Manufacturing: Critical Quality Attribute (CQA) Predictor")
-st.markdown("---")
+# 1. NUMBER INPUTS (Strictly text boxes, no sliders)
+ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
+do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=59.72, format="%.2f")
+glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.16, format="%.2f")
+lactate_val = st.sidebar.number_input("Lactate (mM)", value=15.65, format="%.2f")
+# Note: Add any other parameters your model needs using the exact same format above.
 
-# Interface setup
-st.sidebar.header("Operator Input Panel")
-st.sidebar.info("Enter current bioreactor parameters below to simulate a real-time batch prediction.")
-
-# Sliders for user input
-pH = st.sidebar.slider("pH", 6.8, 7.4, 7.1)
-DO = st.sidebar.slider("Dissolved Oxygen (%)", 10.0, 100.0, 50.0)
-glucose = st.sidebar.slider("Glucose (mM)", 0.0, 30.0, 15.0)
-lactate = st.sidebar.slider("Lactate (mM)", 0.0, 40.0, 10.0)
-
-# Simulate feature engineering
-lactate_glucose_ratio = lactate / (glucose + 1e-5)
-stress_index = lactate / (DO + 1e-5)
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.header("🔬 Process Status")
-    st.write(f"**Lactate-Glucose Ratio:** {lactate_glucose_ratio:.2f}")
-    st.write(f"**Culture Stress Index:** {stress_index:.2f}")
+# 2. THE PREDICT BUTTON
+if st.sidebar.button("Predict Viability"):
     
-with col2:
-    st.header("⚙️ Drift Detection")
-    # Simulated drift logic for the prototype dashboard
-    if stress_index > 0.8:
-        st.error("🚨 HIGH: Process Drift Detected!")
-    else:
-        st.success("✅ NORMAL: Process within control limits.")
-
-with col3:
-    st.header("🎯 CQA Prediction")
-    # Simulated prediction based on inputs (In a real app, you load the .json model here)
-    simulated_yield = 2.5 - (stress_index * 0.5) + (pH * 0.1)
-    st.metric(label="Predicted Cell Yield (10^6 cells/mL)", value=f"{simulated_yield:.2f}")
-
-st.markdown("---")
-st.header("🧠 Explainable AI (SHAP Interpretation)")
-st.info(f"The model predicted a yield of {simulated_yield:.2f}. The primary driving factor for this prediction was the Culture Stress Index. Ensure Dissolved Oxygen levels are maintained to prevent hypoxic lactate accumulation.")
-
-
-
-# 1. CREATE THE BUTTON IN THE SIDEBAR OR MAIN PAGE
-if st.sidebar.button("Execute Batch Prediction"):
+    # Build the batch data dataframe
+    current_batch = pd.DataFrame([{
+        "pH": ph_val,
+        "Dissolved Oxygen (%)": do_val,
+        "Glucose (mM)": glucose_val,
+        "Lactate (mM)": lactate_val
+        # Ensure these column names match your XGBoost model's exact expected features!
+    }])
     
-    # 2. RUN PREDICTION (Using the variables from your sliders)
-    # Ensure current_batch is correctly formatted as we did in Colab
+    # Run prediction using the .values trick to bypass Pandas errors
     prediction = model.predict(current_batch.values)[0] 
     
-    # Calculate Risk Level based on Viability
+    # Calculate Risk Level
     if prediction < 80.0: 
         risk = "HIGH (Critical Cell Death)"
     elif prediction < 90.0: 
@@ -70,33 +39,33 @@ if st.sidebar.button("Execute Batch Prediction"):
     else: 
         risk = "LOW (Optimal)"
 
-    # 3. DISPLAY THE VIABILITY RESULT
+    # Display Result on the main page
     st.subheader("🎯 CQA Prediction")
     st.metric(label="Predicted Viability", value=f"{prediction:.2f}%", delta=risk)
     
-    # 4. LOG TO AUDIT TRAIL
-    # Create the log entry
+    # Audit Trail Logging
     audit_record = pd.DataFrame([{
         "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "User": "Operator_01", # In a real app, this would be the logged-in user
+        "User": "Operator_01",
+        "pH": ph_val,
+        "Dissolved_Oxygen": do_val,
         "Predicted_Viability": round(prediction, 4),
         "Risk_Level": risk,
-        "Software_Version": "v1.4"
+        "Software_Version": "v1.5"
     }])
     
-    # Define path for audit trail
     AUDIT_TRAIL_PATH = "system_audit_trail.csv"
     
-    # Append to CSV (Streamlit will save this in its local container)
     if not os.path.exists(AUDIT_TRAIL_PATH):
         audit_record.to_csv(AUDIT_TRAIL_PATH, index=False)
     else:
         audit_record.to_csv(AUDIT_TRAIL_PATH, mode='a', header=False, index=False)
         
     st.success("✅ Prediction successful and saved to secure audit trail.")
-    
-    # ... [Your existing SHAP explanation code can go here, inside the button block] ...
+
+    # ... [Insert your SHAP explanation plot rendering code here] ...
 
 else:
     # This shows when the app first loads, before the button is clicked
-    st.info("👈 Enter parameters in the sidebar and click 'Execute Batch Prediction' to begin.")
+    st.info("👈 Enter parameters in the text boxes and click 'Predict Viability' to begin.")
+# --- END OF SIDEBAR REPLACEMENT ---
