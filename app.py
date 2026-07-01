@@ -1,3 +1,8 @@
+import datetime
+import os
+import pandas as pd
+import streamlit as st
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -47,3 +52,51 @@ with col3:
 st.markdown("---")
 st.header("🧠 Explainable AI (SHAP Interpretation)")
 st.info(f"The model predicted a yield of {simulated_yield:.2f}. The primary driving factor for this prediction was the Culture Stress Index. Ensure Dissolved Oxygen levels are maintained to prevent hypoxic lactate accumulation.")
+
+
+
+# 1. CREATE THE BUTTON IN THE SIDEBAR OR MAIN PAGE
+if st.sidebar.button("Execute Batch Prediction"):
+    
+    # 2. RUN PREDICTION (Using the variables from your sliders)
+    # Ensure current_batch is correctly formatted as we did in Colab
+    prediction = model.predict(current_batch.values)[0] 
+    
+    # Calculate Risk Level based on Viability
+    if prediction < 80.0: 
+        risk = "HIGH (Critical Cell Death)"
+    elif prediction < 90.0: 
+        risk = "MEDIUM (Sub-optimal)"
+    else: 
+        risk = "LOW (Optimal)"
+
+    # 3. DISPLAY THE VIABILITY RESULT
+    st.subheader("🎯 CQA Prediction")
+    st.metric(label="Predicted Viability", value=f"{prediction:.2f}%", delta=risk)
+    
+    # 4. LOG TO AUDIT TRAIL
+    # Create the log entry
+    audit_record = pd.DataFrame([{
+        "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "User": "Operator_01", # In a real app, this would be the logged-in user
+        "Predicted_Viability": round(prediction, 4),
+        "Risk_Level": risk,
+        "Software_Version": "v1.4"
+    }])
+    
+    # Define path for audit trail
+    AUDIT_TRAIL_PATH = "system_audit_trail.csv"
+    
+    # Append to CSV (Streamlit will save this in its local container)
+    if not os.path.exists(AUDIT_TRAIL_PATH):
+        audit_record.to_csv(AUDIT_TRAIL_PATH, index=False)
+    else:
+        audit_record.to_csv(AUDIT_TRAIL_PATH, mode='a', header=False, index=False)
+        
+    st.success("✅ Prediction successful and saved to secure audit trail.")
+    
+    # ... [Your existing SHAP explanation code can go here, inside the button block] ...
+
+else:
+    # This shows when the app first loads, before the button is clicked
+    st.info("👈 Enter parameters in the sidebar and click 'Execute Batch Prediction' to begin.")
