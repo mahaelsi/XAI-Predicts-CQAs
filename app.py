@@ -11,23 +11,22 @@ import streamlit as st
 st.set_page_config(page_title="Biopharma AI CQA Predictor", layout="wide")
 
 # ==========================================
-# 2. LOAD THE AI MODEL
+# 2. LOAD THE AI MODEL (From GitHub, not Drive)
 # ==========================================
-# We use st.cache_resource so the app only loads the model once, making it fast.
 @st.cache_resource
 def load_xgboost_model():
     model = xgb.XGBRegressor()
-    # IMPORTANT: Ensure this path matches the location of your model in GitHub!
-    # If it's in a folder called '04_Models', it should be '04_Models/xgboost_cqa_model.json'
+    # Streamlit will look for this file in your GitHub repository
     model.load_model("xgboost_cqa_model.json") 
     return model
 
-# Load the model into memory BEFORE the button is clicked
+# Safely load the model before drawing the page
 try:
     model = load_xgboost_model()
 except Exception as e:
-    st.error(f"Model File Missing or Path Incorrect. System Error: {e}")
-    st.stop() # Stops the app from crashing further if the model isn't found
+    st.error("🚨 Model File Missing! Please ensure 'xgboost_cqa_model.json' has been uploaded to your GitHub repository.")
+    st.code(str(e))
+    st.stop() # Stop execution until the file is uploaded to GitHub
 
 # ==========================================
 # 3. OPERATOR INPUT PANEL (SIDEBAR)
@@ -35,6 +34,7 @@ except Exception as e:
 st.sidebar.markdown("### Operator Input Panel")
 st.sidebar.info("Enter precise bioreactor parameters below to simulate a real-time batch prediction.")
 
+# Operator Input Fields
 ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
 do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=60.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
@@ -49,19 +49,19 @@ st.markdown("---")
 
 if st.sidebar.button("Predict Viability"):
     
-    # Create the raw data matrix for XGBoost
+    # 1. Create the raw data matrix for XGBoost
+    # NOTE: Ensure these 4 columns match exactly what your model expects
     current_batch = pd.DataFrame([{
         "pH": ph_val,
         "Dissolved Oxygen (%)": do_val,
         "Glucose (mM)": glucose_val,
         "Lactate (mM)": lactate_val
-        # Note: If your model was trained on more parameters, they MUST be added here.
     }])
     
-    # Execute prediction bypassing Pandas dtype formatting
+    # 2. Execute prediction bypassing Pandas dtype formatting
     prediction = model.predict(current_batch.values)[0] 
     
-    # Assess Biological Risk
+    # 3. Assess Biological Risk
     if prediction < 80.0: 
         risk = "HIGH (Critical Cell Death)"
     elif prediction < 90.0: 
@@ -69,7 +69,7 @@ if st.sidebar.button("Predict Viability"):
     else: 
         risk = "LOW (Optimal)"
 
-    # --- RENDER DASHBOARD VISUALS ---
+    # 4. Render Dashboard Visuals
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -86,17 +86,18 @@ if st.sidebar.button("Predict Viability"):
 
     st.markdown("---")
     
-    # --- SHAP EXPLAINABLE AI PLACEHOLDER ---
+    # 5. SHAP Explainable AI Placeholder
     st.subheader("🧠 Explainable AI (SHAP Interpretation)")
     st.info(f"The model predicted a viability of {prediction:.2f}%. The primary driving factors for this specific batch prediction will be visualized here.")
-    # (Your actual SHAP waterfall plot rendering code would go here)
     
-    # --- ALCOA+ AUDIT TRAIL LOGGING ---
+    # 6. ALCOA+ Audit Trail Logging
     audit_record = pd.DataFrame([{
         "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "User": "Operator_01",
         "pH": ph_val,
         "Dissolved_Oxygen": do_val,
+        "Glucose": glucose_val,
+        "Lactate": lactate_val,
         "Predicted_Viability": round(prediction, 4),
         "Risk_Level": risk,
         "Software_Version": "v1.6"
@@ -111,5 +112,5 @@ if st.sidebar.button("Predict Viability"):
     st.sidebar.success("✅ Audit trail securely logged.")
 
 else:
-    # What the app shows before the operator hits Predict
+    # Default message before button click
     st.info("👈 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to generate the batch report.")
