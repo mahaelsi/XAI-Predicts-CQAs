@@ -86,8 +86,8 @@ st.markdown("---")
 
 if st.sidebar.button("Predict Viability"):
     
-    # Assemble input variables into a clean 15-parameter feature matrix for the model     
-        current_batch = pd.DataFrame([{
+    # 1. Assemble input variables into a clean 15-parameter feature matrix
+    current_batch = pd.DataFrame([{
         "pH": ph_val,
         "Dissolved Oxygen (%)": do_val,
         "Glucose (mM)": glucose_val,
@@ -95,20 +95,20 @@ if st.sidebar.button("Predict Viability"):
         "Temperature (oC)": temp_val,
         "CO2 (%)": co2_val,
         "Agitation (rpm)": agitation_val,
-        "Seeding Density ( cells/mL)": seeding_val,
+        "Seeding Density (cells/mL)": seeding_val,
         "Cell Count": cell_count_val,
         "Population Doubling": pop_doubling_val,
-        "Study_Reference_x": 0.0,  # Hardcoded, hidden from operator
+        "Study_Reference_x": 0.0,
         "Donor": donor_val,
         "Tissue": tissue_val,
-        "Study_Reference_y": 0.0,  # Hardcoded, hidden from operator
-        "Day / Time": 1.0          # Hardcoded, hidden from operator
+        "Study_Reference_y": 0.0,
+        "Day / Time": 1.0 
     }])
     
-    # Structural Check: Ensure provided matrix dimensions match internal model configuration
+    # 2. Structural Check: Ensure dimensions match
     expected_features = model.n_features_in_
     provided_features = current_batch.shape[1]
-    
+
     if expected_features != provided_features:
         st.error(f"⚠️ Feature Mismatch! The model expects **{expected_features}** parameters, but received **{provided_features}**.")
         st.stop()
