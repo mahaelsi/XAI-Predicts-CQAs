@@ -84,8 +84,8 @@ st.markdown("---")
 
 if st.sidebar.button("Predict Viability"):
     
-    # Assemble input variables into a clean 15-parameter feature matrix for the model
-    current_batch = pd.DataFrame([{
+    # Assemble input variables into a clean 15-parameter feature matrix for the model     
+        current_batch = pd.DataFrame([{
         "pH": ph_val,
         "Dissolved Oxygen (%)": do_val,
         "Glucose (mM)": glucose_val,
@@ -96,11 +96,11 @@ if st.sidebar.button("Predict Viability"):
         "Seeding Density ( cells/mL)": seeding_val,
         "Cell Count": cell_count_val,
         "Population Doubling": pop_doubling_val,
-        "Study_Reference_x": study_ref_x_val,
+        "Study_Reference_x": 0.0,  # Hardcoded, hidden from operator
         "Donor": donor_val,
         "Tissue": tissue_val,
-        "Study_Reference_y": study_ref_y_val,
-        "Day / Time": day_val 
+        "Study_Reference_y": 0.0,  # Hardcoded, hidden from operator
+        "Day / Time": 1.0          # Hardcoded, hidden from operator
     }])
     
     # Structural Check: Ensure provided matrix dimensions match internal model configuration
