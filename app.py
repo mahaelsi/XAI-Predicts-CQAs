@@ -180,4 +180,18 @@ if st.sidebar.button("Predict Viability"):
         st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
 
 else:
-    st.info("👈 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to run the evaluation workflow.")
+    st.subheader("🧠 Explainable AI (SHAP Interpretation)")
+    
+    with st.spinner("Calculating local feature attributions..."):
+        # Generate the SHAP values
+        explainer = shap.Explainer(model)
+        shap_values = explainer(current_batch)
+        
+        # Draw the Waterfall plot
+        fig, ax = plt.subplots(figsize=(10, 5))
+        shap.plots.waterfall(shap_values[0], show=False)
+        plt.tight_layout()
+        
+        # Display the plot in the app
+        st.pyplot(fig)
+        ("👈 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to run the evaluation workflow.")
