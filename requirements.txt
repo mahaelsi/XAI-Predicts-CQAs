@@ -6,3 +6,5 @@ shap
 matplotlib
 gspread
 google-auth
+shap
+matplotlib
