@@ -73,12 +73,8 @@ cell_count_val = st.sidebar.number_input("Cell Count", value=500000.00, format="
 pop_doubling_val = st.sidebar.number_input("Population Doubling", value=1.00, format="%.2f")
 
 # Data Pipeline Metadata Features
-study_ref_x_val = st.sidebar.number_input("Study_Reference_x", value=0.00, format="%.2f")
 donor_val = st.sidebar.number_input("Donor", value=0.00, format="%.2f")
 tissue_val = st.sidebar.number_input("Tissue (0=BoneMarrow, 1=Adipose)", value=1.00, format="%.2f")
-study_ref_y_val = st.sidebar.number_input("Study_Reference_y", value=0.00, format="%.2f")
-day_val = st.sidebar.number_input("Day / Time", value=1.00, format="%.2f")
-
 # ==========================================
 # 5. MAIN DASHBOARD DISPLAY LAYOUT
 # ==========================================
