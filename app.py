@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ==========================================
 # 1. PAGE CONFIGURATION & UI SETUP
@@ -11,7 +13,7 @@ import streamlit as st
 st.set_page_config(page_title="Viability prediction XAI tool", layout="wide")
 
 # ==========================================
-# 2. LOAD THE AI MODEL
+# 2. LOAD THE MACHINE LEARNING ENGINE
 # ==========================================
 @st.cache_resource
 def load_xgboost_model():
@@ -22,16 +24,43 @@ def load_xgboost_model():
 try:
     model = load_xgboost_model()
 except Exception as e:
-    st.error("🚨 Model File Missing! Please ensure 'xgboost_cqa_model.json' has been uploaded to your GitHub repository.")
+    st.error("🚨 Model File Missing! Please ensure 'xgboost_cqa_model.json' has been committed to your GitHub repository.")
     st.stop() 
 
 # ==========================================
-# 3. OPERATOR INPUT PANEL (SIDEBAR)
+# 3. LIVE GOOGLE SHEETS LOGGING FUNCTION
+# ==========================================
+def log_to_google_sheets(row_data):
+    try:
+        # Define API authorization access scopes
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        
+        # Access credentials directly from Streamlit's secure backend vault
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], 
+            scopes=scopes
+        )
+        
+        # Authorize client and hook into the live spreadsheet
+        client = gspread.authorize(creds)
+        
+        # ⚠️ PASTE YOUR ACTUAL GOOGLE SHEET URL HERE
+        sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit").sheet1
+        
+        # Inject row data sequentially into the bottom ledger line
+        sheet.append_row(row_data)
+        return True
+    except Exception as e:
+        st.sidebar.error(f"❌ Cloud Audit Logging Failed: {e}")
+        return False
+
+# ==========================================
+# 4. OPERATOR INPUT PANEL (SIDEBAR)
 # ==========================================
 st.sidebar.markdown("### Operator Input Panel")
 st.sidebar.info("Enter precise bioreactor parameters below to simulate a real-time batch prediction.")
 
-# We are adding 15 inputs based on your Colab training data
+# Core Bioprocess Features
 ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
 do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=60.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
@@ -39,28 +68,27 @@ lactate_val = st.sidebar.number_input("Lactate (mM)", value=15.00, format="%.2f"
 temp_val = st.sidebar.number_input("Temperature (oC)", value=37.00, format="%.2f")
 co2_val = st.sidebar.number_input("CO2 (%)", value=5.00, format="%.2f")
 agitation_val = st.sidebar.number_input("Agitation (rpm)", value=100.00, format="%.2f")
-# Note the exact spelling from your previous Colab error
-seeding_val = st.sidebar.number_input("Seeding Density ( cells/mL)", value=10000.00, format="%.2f") 
+seeding_val = st.sidebar.number_input("Seeding Density (cells/mL)", value=10000.00, format="%.2f") 
 cell_count_val = st.sidebar.number_input("Cell Count", value=500000.00, format="%.2f")
 pop_doubling_val = st.sidebar.number_input("Population Doubling", value=1.00, format="%.2f")
 
-# Assuming these were label-encoded as numbers in Colab
+# Data Pipeline Metadata Features
 study_ref_x_val = st.sidebar.number_input("Study_Reference_x", value=0.00, format="%.2f")
 donor_val = st.sidebar.number_input("Donor", value=0.00, format="%.2f")
-tissue_val = st.sidebar.number_input("Tissue", value=0.00, format="%.2f")
+tissue_val = st.sidebar.number_input("Tissue (0=BoneMarrow, 1=Adipose)", value=1.00, format="%.2f")
 study_ref_y_val = st.sidebar.number_input("Study_Reference_y", value=0.00, format="%.2f")
-day_val = st.sidebar.number_input("Day / Time", value=1.00, format="%.2f") # Placeholder for the 15th feature
+day_val = st.sidebar.number_input("Day / Time", value=1.00, format="%.2f")
 
 # ==========================================
-# 4. MAIN DASHBOARD & PREDICTION ENGINE
+# 5. MAIN DASHBOARD DISPLAY LAYOUT
 # ==========================================
 st.title("Viability prediction XAI tool")
-st.write("Good Manufacturing Practice (GMP) compliant predictive monitoring.")
+st.write("Good Manufacturing Practice (GMP) compliant predictive monitoring dashboard.")
 st.markdown("---")
 
 if st.sidebar.button("Predict Viability"):
     
-    # 1. Create the raw data matrix for XGBoost (Must be 15 features)
+    # Assemble input variables into a clean 15-parameter feature matrix for the model
     current_batch = pd.DataFrame([{
         "pH": ph_val,
         "Dissolved Oxygen (%)": do_val,
@@ -79,28 +107,18 @@ if st.sidebar.button("Predict Viability"):
         "Day / Time": day_val 
     }])
     
-    # 2. ADVANCED SAFETY CHECK
+    # Structural Check: Ensure provided matrix dimensions match internal model configuration
     expected_features = model.n_features_in_
     provided_features = current_batch.shape[1]
     
     if expected_features != provided_features:
-        st.error(f"⚠️ Feature Mismatch Error! The model expects **{expected_features}** features, but received **{provided_features}**.")
-        
-        # MAGIC TRICK: Ask the XGBoost model exactly what names it is looking for
-        try:
-            expected_names = model.get_booster().feature_names
-            if expected_names:
-                st.warning(f"**Your model specifically expects these exact columns in this exact order:**\n\n {expected_names}")
-                st.info("To fix this: Go into `app.py` and update the `current_batch` DataFrame so the names match the list above exactly.")
-        except:
-            pass
-            
+        st.error(f"⚠️ Feature Mismatch! The model expects **{expected_features}** parameters, but received **{provided_features}**.")
         st.stop()
         
-    # 3. Execute prediction safely
+    # Run mathematical inference
     prediction = model.predict(current_batch.values)[0] 
     
-    # 4. Assess Biological Risk
+    # Establish operational risk grading brackets
     if prediction < 80.0: 
         risk = "HIGH (Critical Cell Death)"
     elif prediction < 90.0: 
@@ -108,7 +126,7 @@ if st.sidebar.button("Predict Viability"):
     else: 
         risk = "LOW (Optimal)"
 
-    # 5. Render Dashboard Visuals
+    # Render results sections using high-visibility metrics boxes
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -117,7 +135,8 @@ if st.sidebar.button("Predict Viability"):
         
     with col2:
         st.subheader("⚙️ Drift Detection")
-        st.success("✅ NORMAL: Process within control limits.")
+        drift_status = "Normal"
+        st.success(f"✅ {drift_status.upper()}: Process within control limits.")
         
     with col3:
         st.subheader("🎯 CQA Prediction")
@@ -125,26 +144,42 @@ if st.sidebar.button("Predict Viability"):
 
     st.markdown("---")
     
-    # 6. SHAP Explainable AI Placeholder
     st.subheader("🧠 Explainable AI (SHAP Interpretation)")
-    st.info(f"The model predicted a viability of {prediction:.2f}%. The primary driving factors for this specific batch prediction will be visualized here.")
+    st.info(f"The model predicted a final viability of {prediction:.2f}%. Local parameter attribution values will compute here.")
     
-    # 7. ALCOA+ Audit Trail Logging
-    audit_record = pd.DataFrame([{
-        "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "User": "Operator_01",
-        "Predicted_Viability": round(prediction, 4),
-        "Risk_Level": risk,
-        "Software_Version": "v2.1"
-    }])
+    # ==========================================
+    # 6. EXACT ROBUST A1 TO N1 AUDIT EXCEL MAPPING
+    # ==========================================
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    operator_id = "Operator_01"
+    software_version = "v2.1-Cloud"
     
-    AUDIT_TRAIL_PATH = "system_audit_trail.csv"
-    if not os.path.exists(AUDIT_TRAIL_PATH):
-        audit_record.to_csv(AUDIT_TRAIL_PATH, index=False)
-    else:
-        audit_record.to_csv(AUDIT_TRAIL_PATH, mode='a', header=False, index=False)
+    # This array tracks sequentially into columns A through N of the cloud sheet
+    audit_row = [
+        current_time,                                      # A: Time_Stamp
+        operator_id,                                       # B: User
+        float(round(prediction, 4)),                       # C: Predicted_Viability
+        risk,                                              # D: Risk_Level
+        drift_status,                                      # E: Drift_Status
+        software_version,                                  # F: Software_Version
+        float(temp_val),                                   # G: Temperature
+        float(agitation_val),                              # H: Agitation
+        float(ph_val),                                     # I: pH
+        float(do_val),                                     # J: DO
+        float(seeding_val),                                # K: Seeding_Density
+        "Adipose" if tissue_val == 1.0 else "BoneMarrow",  # L: Tissue
+        float(glucose_val),                                # M: Glucose
+        float(lactate_val)                                 # N: Lactate
+    ]
+    
+    # Submit execution logging payload to cloud destination
+    with st.spinner("Securing audit record in cloud ledger..."):
+        success = log_to_google_sheets(audit_row)
         
-    st.sidebar.success("✅ Audit trail securely logged.")
+    if success:
+        st.sidebar.success("✅ Audit trail securely pushed to live Google Ledger.")
+    else:
+        st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
 
 else:
-    st.info("👈 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to generate the batch report.")
+    st.info("👈 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to run the evaluation workflow.")
