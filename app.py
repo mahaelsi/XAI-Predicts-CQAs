@@ -45,7 +45,7 @@ def log_to_google_sheets(row_data):
         client = gspread.authorize(creds)
         
         # ⚠️ PASTE YOUR ACTUAL GOOGLE SHEET URL HERE
-        sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit").sheet1
+        sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXfSz-9wBeUtVJTORXHh_lf8B2AFQ/edit?usp=drivesdk")
         
         # Inject row data sequentially into the bottom ledger line
         sheet.append_row(row_data)
