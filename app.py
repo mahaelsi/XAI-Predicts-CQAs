@@ -143,7 +143,20 @@ if st.sidebar.button("Predict Viability"):
     st.markdown("---")
     
     st.subheader("🧠 Explainable AI (SHAP Interpretation)")
-    st.info(f"The model predicted a final viability of {prediction:.2f}%. Local parameter attribution values will compute here.")
+    st.subheader("🧠 Explainable AI (SHAP Interpretation)")
+    
+    with st.spinner("Calculating local feature attributions..."):
+        # Generate the SHAP values
+        explainer = shap.Explainer(model)
+        shap_values = explainer(current_batch)
+        
+        # Draw the Waterfall plot
+        fig, ax = plt.subplots(figsize=(10, 5))
+        shap.plots.waterfall(shap_values[0], show=False)
+        plt.tight_layout()
+        
+        # Display the plot in the app
+        st.pyplot(fig)
     
     # ==========================================
     # 6. EXACT ROBUST A1 TO N1 AUDIT EXCEL MAPPING
