@@ -143,7 +143,6 @@ if st.sidebar.button("Predict Viability"):
     st.markdown("---")
     
     st.subheader("🧠 Explainable AI (SHAP Interpretation)")
-    st.subheader("🧠 Explainable AI (SHAP Interpretation)")
     
     with st.spinner("Calculating local feature attributions..."):
         # Generate the SHAP values
