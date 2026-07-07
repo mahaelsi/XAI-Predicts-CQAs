@@ -80,32 +80,31 @@ predict_button = st.sidebar.button("Predict Viability")
 # 5. DASHBOARD LAYOUT & EXECUTION FLOW
 # ==========================================
 if predict_button:
-    # 1. Map the inputs to a dictionary using the EXACT string names your model expects
+    # Key Mapping configured with the model's exact signature 
     feature_dict = {
         "pH": [ph_val],
         "Dissolved Oxygen (%)": [do_val],
         "Glucose (mM)": [glucose_val],
         "Lactate (mM)": [lactate_val],
-        "Temperature (oC)": [temp_val],
+        "Temperature (OC)": [temp_val],  # Changed to capital 'O' to match model exactly
         "CO2 (%)": [co2_val],
         "Agitation (rpm)": [agitation_val],
         "Seeding Density (cells/mL)": [seeding_val],
         "Cell Count": [cell_count_val],
         "Population Doubling": [pop_doubling_val],
-        "Study_Reference_x": [0.00],  # Sent to model in background
+        "Study_Reference_x": [0.00],
         "Donor": [donor_val],
         "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
-        "Study_Reference_y": [0.00],  # Sent to model in background
-        "Day / Time": [1.00]          # Sent to model in background
+        "Study_Reference_y": [0.00],
+        "Day / Time": [1.00]
     }
     
-    # 2. Create the DataFrame matching the 15 features perfectly
     current_batch = pd.DataFrame(feature_dict)
 
-    # Compute live inference safely with names intact
+    # Compute live inference
     prediction = float(model.predict(current_batch)[0])
     
-    # UI Metrics & Calculations
+    # Process calculations
     lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
     drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
     risk = "HIGH (Critical)" if prediction < 80.0 else "LOW (Stable)"
@@ -128,7 +127,7 @@ if predict_button:
     # Cloud Logging Transaction
     audit_row = [
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-        float(round(prediction, 4)), risk, drift_status, "v1.6.0-GMP",
+        float(round(prediction, 4)), risk, drift_status, "v1.7.0-GMP",
         float(temp_val), float(agitation_val), float(ph_val), float(do_val),
         float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
         float(glucose_val), float(lactate_val)
@@ -148,7 +147,6 @@ if predict_button:
     
     with st.spinner("Calculating local feature attributions..."):
         try:
-            # TreeExplainer runs seamlessly because data has all 15 expected columns
             explainer = shap.TreeExplainer(model)
             shap_values = explainer(current_batch)
 
