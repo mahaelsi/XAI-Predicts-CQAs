@@ -80,35 +80,30 @@ predict_button = st.sidebar.button("Predict Viability")
 # 5. DASHBOARD LAYOUT & EXECUTION FLOW
 # ==========================================
 if predict_button:
-    # 15 features matching model topology positionally
-    raw_features = [
-        ph_val, do_val, glucose_val, lactate_val, temp_val, co2_val, agitation_val, 
-        seeding_val, cell_count_val, pop_doubling_val, 
-        0.00,  # Background Study_Reference_x
-        donor_val, tissue_val, 
-        0.00,  # Background Study_Reference_y
-        1.00   # Background Day / Time
-    ]
+    # 1. Map the inputs to a dictionary using the EXACT string names your model expects
+    feature_dict = {
+        "pH": [ph_val],
+        "Dissolved Oxygen (%)": [do_val],
+        "Glucose (mM)": [glucose_val],
+        "Lactate (mM)": [lactate_val],
+        "Temperature (oC)": [temp_val],
+        "CO2 (%)": [co2_val],
+        "Agitation (rpm)": [agitation_val],
+        "Seeding Density (cells/mL)": [seeding_val],
+        "Cell Count": [cell_count_val],
+        "Population Doubling": [pop_doubling_val],
+        "Study_Reference_x": [0.00],  # Sent to model in background
+        "Donor": [donor_val],
+        "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
+        "Study_Reference_y": [0.00],  # Sent to model in background
+        "Day / Time": [1.00]          # Sent to model in background
+    }
     
-    # Pristine feature list for graph display matching the original training order
-    display_names = [
-        "pH", "Dissolved Oxygen (%)", "Glucose (mM)", "Lactate (mM)", "Temperature (oC)", 
-        "CO2 (%)", "Agitation (rpm)", "Seeding Density (cells/mL)", "Cell Count", 
-        "Population Doubling", "Study_Reference_x", "Donor", "Tissue (0=BoneMarrow, 1=Adipose)", 
-        "Study_Reference_y", "Day / Time"
-    ]
-    
-    # Convert input list into a clean raw NumPy matrix array
-    input_matrix = np.array([raw_features], dtype=float)
+    # 2. Create the DataFrame matching the 15 features perfectly
+    current_batch = pd.DataFrame(feature_dict)
 
-    # 🔥 EXPERT FIX: Clear the strict text validation headers from the underlying booster
-    try:
-        model.get_booster().feature_names = None
-    except Exception:
-        pass
-
-    # Process position-based inference safely
-    prediction = float(model.predict(input_matrix)[0])
+    # Compute live inference safely with names intact
+    prediction = float(model.predict(current_batch)[0])
     
     # UI Metrics & Calculations
     lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
@@ -133,7 +128,7 @@ if predict_button:
     # Cloud Logging Transaction
     audit_row = [
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-        float(round(prediction, 4)), risk, drift_status, "v1.5.0-GMP",
+        float(round(prediction, 4)), risk, drift_status, "v1.6.0-GMP",
         float(temp_val), float(agitation_val), float(ph_val), float(do_val),
         float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
         float(glucose_val), float(lactate_val)
@@ -153,12 +148,9 @@ if predict_button:
     
     with st.spinner("Calculating local feature attributions..."):
         try:
-            # Generate positional explanations
+            # TreeExplainer runs seamlessly because data has all 15 expected columns
             explainer = shap.TreeExplainer(model)
-            shap_values = explainer(input_matrix)
-
-            # Manually overlay clean names back onto the output object for the chart layout
-            shap_values.feature_names = display_names
+            shap_values = explainer(current_batch)
 
             # Generate and draw visual waterfall plot canvas
             fig, ax = plt.subplots(figsize=(10, 5))
