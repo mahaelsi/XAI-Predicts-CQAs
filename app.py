@@ -201,7 +201,7 @@ else:
         # 1. Move the SHAP block OUT of the else statement (Match the indentation above)
 st.subheader("🧠 Explainable AI (SHAP Interpretation)")
         
-        with st.spinner("Calculating local feature attributions..."):
+with st.spinner("Calculating local feature attributions..."):
             # Generate the SHAP values
             explainer = shap.Explainer(model)
             shap_values = explainer(current_batch)
