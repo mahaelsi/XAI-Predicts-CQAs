@@ -216,5 +216,5 @@ with st.spinner("Calculating local feature attributions..."):
 
     # 2. This is where your outer 'else:' actually belongs (for when the button is NOT clicked)
     else:
-        st.subheader("🧠 Explainable AI (SHAP Interpretation)")
-        st.info("👉 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to view live parameter attributions.")
+    st.subheader("🧠 Explainable AI (SHAP Interpretation)")
+    st.info("👉 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to view live parameter attributions.")
