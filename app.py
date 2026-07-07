@@ -37,13 +37,9 @@ except Exception as e:
 # ==========================================
 def log_to_google_sheets(row_data):
     try:
-        # Define API authorization access scopes
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        
-        # Access credentials directly from Streamlit's secure secrets vault
         secret_info = st.secrets["gcp_service_account"]
         
-        # Defensive fix for private key newline rendering issues
         if "private_key" in secret_info and "\\n" in secret_info["private_key"]:
             secret_info = dict(secret_info)
             secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
@@ -51,10 +47,7 @@ def log_to_google_sheets(row_data):
         creds = Credentials.from_service_account_info(secret_info, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Open the master spreadsheet workbook
         spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit")
-        
-        # Select worksheet sheet1 before appending row data
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
         return True
@@ -68,7 +61,7 @@ def log_to_google_sheets(row_data):
 st.sidebar.markdown("### 🎛️ Operator Input Panel")
 st.sidebar.info("Enter precise bioreactor parameters below to simulate a real-time batch prediction.")
 
-# Core Bioprocess Features (Cleaned and trimmed UI)
+# Core UI Inputs (Cleaned and trimmed as requested)
 ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
 do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=60.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
@@ -88,27 +81,33 @@ predict_button = st.sidebar.button("Predict Viability")
 # 5. DASHBOARD LAYOUT & EXECUTION FLOW
 # ==========================================
 if predict_button:
-    # Package into a DataFrame matching model requirements exactly
-    feature_dict = {
-        "pH": [ph_val],
-        "Dissolved Oxygen (%)": [do_val],
-        "Glucose (mM)": [glucose_val],
-        "Lactate (mM)": [lactate_val],
-        "Temperature (oC)": [temp_val],
-        "CO2 (%)": [co2_val],
-        "Agitation (rpm)": [agitation_val],
-        "Seeding Density (cells/mL)": [seeding_val],
-        "Cell Count": [cell_count_val],
-        "Population Doubling": [pop_doubling_val],
-        "Study_Reference_x": [0.00],  # Sent directly to model in background
-        "Donor": [donor_val],
-        "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
-        "Study_Reference_y": [0.00],  # Sent directly to model in background
-        "Day / Time": [1.00]          # Sent directly to model in background
-    }
-    current_batch = pd.DataFrame(feature_dict)
+    # Build array mapping exactly to the 15 input positions expected by the model
+    raw_features = [
+        ph_val, do_val, glucose_val, lactate_val, temp_val, co2_val, agitation_val, 
+        seeding_val, cell_count_val, pop_doubling_val, 
+        0.00,  # Study_Reference_x placeholder handled safely in background
+        donor_val, tissue_val, 
+        0.00,  # Study_Reference_y placeholder handled safely in background
+        1.00   # Day / Time placeholder handled safely in background
+    ]
+    
+    # Generate temporary working dataframe
+    current_batch = pd.DataFrame([raw_features])
 
-    # Compute live inference
+    # 🔥 EXPERT FIX: Dynamically extract and assign model's original training features
+    model_features = model.get_booster().feature_names
+    if model_features and len(model_features) == 15:
+        current_batch.columns = model_features
+    else:
+        # Fallback to standard tracking names if names aren't embedded
+        current_batch.columns = [
+            "pH", "Dissolved Oxygen (%)", "Glucose (mM)", "Lactate (mM)", "Temperature (oC)", 
+            "CO2 (%)", "Agitation (rpm)", "Seeding Density (cells/mL)", "Cell Count", 
+            "Population Doubling", "Study_Reference_x", "Donor", "Tissue (0=BoneMarrow, 1=Adipose)", 
+            "Study_Reference_y", "Day / Time"
+        ]
+
+    # Compute live inference safely
     prediction = float(model.predict(current_batch)[0])
     
     # Process calculations
@@ -116,7 +115,7 @@ if predict_button:
     drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
     risk = "HIGH (Critical)" if prediction < 80.0 else "LOW (Stable)"
 
-    # Render top KPI metrics interface layout
+    # Render Main Dashboard Metrics
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("### 🔬 Process Status")
@@ -124,55 +123,58 @@ if predict_button:
     with col2:
         st.markdown("### ⚙️ Drift Detection")
         if drift_status == "NORMAL":
-            st.success("✅ NORMAL: Process within control limits.")
+            st.success("✅ NORMAL: Within Limits")
         else:
-            st.sidebar.warning("⚠️ OUT OF BOUNDS: Dynamic drift verified.")
+            st.warning("⚠️ DRIFT DETECTED")
     with col3:
         st.markdown("### 🎯 CQA Prediction")
-        st.metric(label="Predicted Viability (%)", value=f"{prediction:.2f}%")
-        st.caption(f"Status alert: **{risk}**")
+        st.metric(label="Predicted Viability", value=f"{prediction:.2f}%")
+        st.caption(f"Risk Evaluation: **{risk}**")
 
-    # Construct complete structured transaction line for security ledger
+    # Construct complete ledger entry for Google Sheets tracking
     audit_row = [
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # A: Time_Stamp
-        "System_Operator",                            # B: User
-        float(round(prediction, 4)),                  # C: Predicted_Viability
-        risk,                                         # D: Risk_Level
-        drift_status,                                 # E: Drift_Status
-        "v1.2.0-GMP",                                 # F: Software_Version
-        float(temp_val),                              # G: Temperature
-        float(agitation_val),                         # H: Agitation
-        float(ph_val),                                # I: pH
-        float(do_val),                                # J: DO
-        float(seeding_val),                           # K: Seeding_Density
-        "Adipose" if tissue_val == 1.0 else "BoneMarrow", # L: Tissue
-        float(glucose_val),                           # M: Glucose
-        float(lactate_val)                            # N: Lactate
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "System_Operator",
+        float(round(prediction, 4)),
+        risk,
+        drift_status,
+        "v1.3.0-GMP",
+        float(temp_val),
+        float(agitation_val),
+        float(ph_val),
+        float(do_val),
+        float(seeding_val),
+        "Adipose" if tissue_val == 1.0 else "BoneMarrow",
+        float(glucose_val),
+        float(lactate_val)
     ]
 
-    # Cloud submission tracking
+    # Cloud ledger synchronization
     with st.spinner("Securing audit record in cloud ledger..."):
         success = log_to_google_sheets(audit_row)
 
     if success:
-        st.sidebar.success("✅ Audit trail securely pushed to live Google Ledger.")
+        st.sidebar.success("✅ Audit trail pushed to Google Sheets.")
     else:
-        st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
+        st.sidebar.warning("⚠️ App functional, but cloud log synced failed.")
 
-    # 🧠 EXPLAINABLE AI SECTION
+    # 🧠 EXPLAINABLE AI SECTION (TreeExplainer for robust XGBoost handling)
     st.write("---")
     st.subheader("🧠 Explainable AI (SHAP Interpretation)")
     
     with st.spinner("Calculating local feature attributions..."):
-        explainer = shap.Explainer(model)
-        shap_values = explainer(current_batch)
+        try:
+            # TreeExplainer is bulletproof for native JSON-loaded XGBoost models
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer(current_batch)
 
-        # Build clean visual plot canvas
-        fig, ax = plt.subplots(figsize=(10, 5))
-        shap.plots.waterfall(shap_values[0], show=False)
-        plt.tight_layout()
-        st.pyplot(fig)
+            # Build visual clean plot canvas
+            fig, ax = plt.subplots(figsize=(10, 5))
+            shap.plots.waterfall(shap_values[0], show=False)
+            plt.tight_layout()
+            st.pyplot(fig)
+        except Exception as shap_error:
+            st.error(f"Visualizer Notice: Prediction succeeded, but SHAP generation skipped: {str(shap_error)}")
 
 else:
-    # Prompt shown before the operator hits submit
     st.info("👉 Please enter the current bioreactor telemetry parameters in the sidebar and click 'Predict Viability' to view live predictions and parameter attributions.")
