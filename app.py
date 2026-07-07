@@ -199,7 +199,7 @@ else:
             st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
 
         # 1. Move the SHAP block OUT of the else statement (Match the indentation above)
-        st.subheader("🧠 Explainable AI (SHAP Interpretation)")
+st.subheader("🧠 Explainable AI (SHAP Interpretation)")
         
         with st.spinner("Calculating local feature attributions..."):
             # Generate the SHAP values
