@@ -65,7 +65,7 @@ ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
 do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=60.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
 lactate_val = st.sidebar.number_input("Lactate (mM)", value=15.00, format="%.2f")
-temp_val = st.sidebar.number_input("Temperature (°C)", value=37.00, format="%.2f")
+temp_val = st.sidebar.number_input("Temperature (oC)", value=37.00, format="%.2f")
 co2_val = st.sidebar.number_input("CO2 (%)", value=5.00, format="%.2f")
 agitation_val = st.sidebar.number_input("Agitation (rpm)", value=100.00, format="%.2f")
 seeding_val = st.sidebar.number_input("Seeding Density (cells/mL)", value=10000.00, format="%.2f")
@@ -80,7 +80,7 @@ predict_button = st.sidebar.button("Predict Viability")
 # 5. DASHBOARD LAYOUT & EXECUTION FLOW
 # ==========================================
 if predict_button:
-    # 15 features matching training topology positionally
+    # 15 features matching model topology positionally
     raw_features = [
         ph_val, do_val, glucose_val, lactate_val, temp_val, co2_val, agitation_val, 
         seeding_val, cell_count_val, pop_doubling_val, 
@@ -90,25 +90,25 @@ if predict_button:
         1.00   # Background Day / Time
     ]
     
-    # Universal fallback names for visual graph mapping
+    # Pristine feature list for graph display matching the original training order
     display_names = [
-        "pH", "Dissolved Oxygen (%)", "Glucose (mM)", "Lactate (mM)", "Temperature (°C)", 
+        "pH", "Dissolved Oxygen (%)", "Glucose (mM)", "Lactate (mM)", "Temperature (oC)", 
         "CO2 (%)", "Agitation (rpm)", "Seeding Density (cells/mL)", "Cell Count", 
         "Population Doubling", "Study_Reference_x", "Donor", "Tissue (0=BoneMarrow, 1=Adipose)", 
         "Study_Reference_y", "Day / Time"
     ]
     
-    current_batch = pd.DataFrame([raw_features], columns=display_names)
+    # Convert input list into a clean raw NumPy matrix array
+    input_matrix = np.array([raw_features], dtype=float)
 
-    # 🔥 DEFENSIVE ALIGNMENT INTERCEPTOR
-    model_features = model.get_booster().feature_names
-    if model_features is not None:
-        # If model expects explicitly named strings, force match them perfectly
-        current_batch.columns = model_features
-        prediction = float(model.predict(current_batch)[0])
-    else:
-        # If model expects raw array matrices (None), bypass headers using .values
-        prediction = float(model.predict(current_batch.values)[0])
+    # 🔥 EXPERT FIX: Clear the strict text validation headers from the underlying booster
+    try:
+        model.get_booster().feature_names = None
+    except Exception:
+        pass
+
+    # Process position-based inference safely
+    prediction = float(model.predict(input_matrix)[0])
     
     # UI Metrics & Calculations
     lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
@@ -133,7 +133,7 @@ if predict_button:
     # Cloud Logging Transaction
     audit_row = [
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-        float(round(prediction, 4)), risk, drift_status, "v1.4.0-GMP",
+        float(round(prediction, 4)), risk, drift_status, "v1.5.0-GMP",
         float(temp_val), float(agitation_val), float(ph_val), float(do_val),
         float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
         float(glucose_val), float(lactate_val)
@@ -153,15 +153,12 @@ if predict_button:
     
     with st.spinner("Calculating local feature attributions..."):
         try:
+            # Generate positional explanations
             explainer = shap.TreeExplainer(model)
-            
-            # Execute SHAP mirroring the exact array wrapper style validated above
-            if model_features is not None:
-                shap_values = explainer(current_batch)
-            else:
-                shap_values = explainer(current_batch.values)
-                # Assign labels manually to array output so chart renders cleanly
-                shap_values.feature_names = display_names
+            shap_values = explainer(input_matrix)
+
+            # Manually overlay clean names back onto the output object for the chart layout
+            shap_values.feature_names = display_names
 
             # Generate and draw visual waterfall plot canvas
             fig, ax = plt.subplots(figsize=(10, 5))
