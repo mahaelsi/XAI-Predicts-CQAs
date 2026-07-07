@@ -48,10 +48,17 @@ def log_to_google_sheets(row_data):
         
         # ⚠️ PASTE YOUR ACTUAL GOOGLE SHEET URL HERE
         sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXfSz-9wBeUtVJTORXHh_lf8B2AFQ/edit?usp=drivesdk")
+
+# 📄 PASTE YOUR ACTUAL GOOGLE SHEET URL HERE
+        sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXf...")
         
-        # Inject row data sequentially into the bottom ledger line
-        sheet.append_row(row_data)
+        # 🎯 Target the very first tab (worksheet) inside that file
+        worksheet = sheet.get_worksheet(0) 
+
+        # #️⃣ Inject row data sequentially into the bottom ledger line
+        worksheet.append_row(row_data)
         return True
+        
     except Exception as e:
         st.sidebar.error(f"❌ Cloud Audit Logging Failed: {e}")
         return False
