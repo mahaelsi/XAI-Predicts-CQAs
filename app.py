@@ -1,4 +1,3 @@
-import streamlit as pd
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -55,7 +54,7 @@ def log_to_google_sheets(row_data):
         # Open the master spreadsheet workbook
         spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit")
         
-        # FIX: Select worksheet sheet1 before appending row data
+        # Select worksheet sheet1 before appending row data
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
         return True
@@ -69,7 +68,7 @@ def log_to_google_sheets(row_data):
 st.sidebar.markdown("### 🎛️ Operator Input Panel")
 st.sidebar.info("Enter precise bioreactor parameters below to simulate a real-time batch prediction.")
 
-# Core Bioprocess Features
+# Core Bioprocess Features (Cleaned and trimmed UI)
 ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
 do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=60.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
@@ -80,11 +79,8 @@ agitation_val = st.sidebar.number_input("Agitation (rpm)", value=100.00, format=
 seeding_val = st.sidebar.number_input("Seeding Density (cells/mL)", value=10000.00, format="%.2f")
 cell_count_val = st.sidebar.number_input("Cell Count", value=500000.00, format="%.2f")
 pop_doubling_val = st.sidebar.number_input("Population Doubling", value=1.00, format="%.2f")
-study_ref_x = st.sidebar.number_input("Study_Reference_x", value=0.00, format="%.2f")
 donor_val = st.sidebar.number_input("Donor", value=0.00, format="%.2f")
 tissue_val = st.sidebar.number_input("Tissue (0=BoneMarrow, 1=Adipose)", value=1.00, format="%.2f")
-study_ref_y = st.sidebar.number_input("Study_Reference_y", value=0.00, format="%.2f")
-day_time_val = st.sidebar.number_input("Day / Time", value=1.00, format="%.2f")
 
 predict_button = st.sidebar.button("Predict Viability")
 
@@ -104,11 +100,11 @@ if predict_button:
         "Seeding Density (cells/mL)": [seeding_val],
         "Cell Count": [cell_count_val],
         "Population Doubling": [pop_doubling_val],
-        "Study_Reference_x": [study_ref_x],
+        "Study_Reference_x": [0.00],  # Sent directly to model in background
         "Donor": [donor_val],
         "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
-        "Study_Reference_y": [study_ref_y],
-        "Day / Time": [day_time_val]
+        "Study_Reference_y": [0.00],  # Sent directly to model in background
+        "Day / Time": [1.00]          # Sent directly to model in background
     }
     current_batch = pd.DataFrame(feature_dict)
 
@@ -163,7 +159,7 @@ if predict_button:
     else:
         st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
 
-    # 🧠 EXPLAINABLE AI SECTION (Runs synchronously inside button scope)
+    # 🧠 EXPLAINABLE AI SECTION
     st.write("---")
     st.subheader("🧠 Explainable AI (SHAP Interpretation)")
     
