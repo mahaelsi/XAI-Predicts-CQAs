@@ -192,25 +192,29 @@ if st.sidebar.button("Predict Viability"):
     # Submit execution logging payload to cloud destination
     with st.spinner("Securing audit record in cloud ledger..."):
         success = log_to_google_sheets(audit_row)
-        
-    if success:
-        st.sidebar.success("✅ Audit trail securely pushed to live Google Ledger.")
-    else:
-        st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
 
-else:
-    st.subheader("🧠 Explainable AI (SHAP Interpretation)")
-    
-    with st.spinner("Calculating local feature attributions..."):
-        # Generate the SHAP values
-        explainer = shap.Explainer(model)
-        shap_values = explainer(current_batch)
+if success:
+            st.sidebar.success("✅ Audit trail securely pushed to live Google Ledger.")
+        else:
+            st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
+
+        # 1. Move the SHAP block OUT of the else statement (Match the indentation above)
+        st.subheader("🧠 Explainable AI (SHAP Interpretation)")
         
-        # Draw the Waterfall plot
-        fig, ax = plt.subplots(figsize=(10, 5))
-        shap.plots.waterfall(shap_values[0], show=False)
-        plt.tight_layout()
-        
-        # Display the plot in the app
-        st.pyplot(fig)
-        ("👈 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to run the evaluation workflow.")
+        with st.spinner("Calculating local feature attributions..."):
+            # Generate the SHAP values
+            explainer = shap.Explainer(model)
+            shap_values = explainer(current_batch)
+
+            # Draw the Waterfall plot
+            fig, ax = plt.subplots(figsize=(10, 5))
+            shap.plots.waterfall(shap_values[0], show=False)
+            plt.tight_layout()
+            
+            # Display the plot in the app
+            st.pyplot(fig)
+
+    # 2. This is where your outer 'else:' actually belongs (for when the button is NOT clicked)
+    else:
+        st.subheader("🧠 Explainable AI (SHAP Interpretation)")
+        st.info("👉 Please enter the current bioreactor telemetry in the sidebar and click 'Predict Viability' to view live parameter attributions.")
