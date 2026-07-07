@@ -195,7 +195,7 @@ if st.sidebar.button("Predict Viability"):
 
 if success:
             st.sidebar.success("✅ Audit trail securely pushed to live Google Ledger.")
-        else:
+else:
             st.sidebar.warning("⚠️ Warning: Output calculated but cloud log synchronization failed.")
 
         # 1. Move the SHAP block OUT of the else statement (Match the indentation above)
