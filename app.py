@@ -22,15 +22,17 @@ st.write("---")
 # ==========================================
 @st.cache_resource
 def load_xgboost_model():
-    model = xgb.XGBRegressor()
-    model.load_model("xgboost_cqa_model.json")
-    return model
+    model_obj = xgb.XGBRegressor()
+    model_obj.load_model("xgboost_cqa_model.json")
+    return model_obj
+
+# Initialize global variable placeholder to avoid NameErrors
+model = None
 
 try:
     model = load_xgboost_model()
 except Exception as e:
-    st.error(f"❌ Model File Missing! Please ensure 'xgboost_cqa_model.json' has been committed to your repository.")
-    st.stop()
+    st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your root directory. Detail: {str(e)}")
 
 # ==========================================
 # 3. LIVE GOOGLE SHEETS LOGGING FUNCTION
@@ -80,83 +82,85 @@ predict_button = st.sidebar.button("Predict Viability")
 # 5. DASHBOARD LAYOUT & EXECUTION FLOW
 # ==========================================
 if predict_button:
-    # Key Mapping configured with the model's exact signature 
-    feature_dict = {
-        "pH": [ph_val],
-        "Dissolved Oxygen (%)": [do_val],
-        "Glucose (mM)": [glucose_val],
-        "Lactate (mM)": [lactate_val],
-        "Temperature (OC)": [temp_val],  # Changed to capital 'O' to match model exactly
-        "CO2 (%)": [co2_val],
-        "Agitation (rpm)": [agitation_val],
-        "Seeding Density (cells/mL)": [seeding_val],
-        "Cell Count": [cell_count_val],
-        "Population Doubling": [pop_doubling_val],
-        "Study_Reference_x": [0.00],
-        "Donor": [donor_val],
-        "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
-        "Study_Reference_y": [0.00],
-        "Day / Time": [1.00]
-    }
-    
-    current_batch = pd.DataFrame(feature_dict)
-
-    # Compute live inference
-    prediction = float(model.predict(current_batch)[0])
-    
-    # Process calculations
-    lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
-    drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
-    risk = "HIGH (Critical)" if prediction < 80.0 else "LOW (Stable)"
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("### 🔬 Process Status")
-        st.metric(label="Lactate-Glucose Ratio", value=f"{lac_glu_ratio}")
-    with col2:
-        st.markdown("### ⚙️ Drift Detection")
-        if drift_status == "NORMAL":
-            st.success("✅ NORMAL: Within Limits")
-        else:
-            st.warning("⚠️ DRIFT DETECTED")
-    with col3:
-        st.markdown("### 🎯 CQA Prediction")
-        st.metric(label="Predicted Viability", value=f"{prediction:.2f}%")
-        st.caption(f"Risk Evaluation: **{risk}**")
-
-    # Cloud Logging Transaction
-    audit_row = [
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-        float(round(prediction, 4)), risk, drift_status, "v1.7.0-GMP",
-        float(temp_val), float(agitation_val), float(ph_val), float(do_val),
-        float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
-        float(glucose_val), float(lactate_val)
-    ]
-
-    with st.spinner("Securing audit record in cloud ledger..."):
-        success = log_to_google_sheets(audit_row)
-
-    if success:
-        st.sidebar.success("✅ Audit trail pushed to Google Sheets.")
+    if model is None:
+        st.error("❌ Cannot calculate prediction because the XGBoost model failed to initialize. Please check your repository files.")
     else:
-        st.sidebar.warning("⚠️ App functional, but cloud log sync failed.")
+        # Match signature parameters exactly to the model topology structure
+        feature_dict = {
+            "pH": [ph_val],
+            "Dissolved Oxygen (%)": [do_val],
+            "Glucose (mM)": [glucose_val],
+            "Lactate (mM)": [lactate_val],
+            "Temperature (OC)": [temp_val], 
+            "CO2 (%)": [co2_val],
+            "Agitation (rpm)": [agitation_val],
+            "Seeding Density (cells/mL)": [seeding_val],
+            "Cell Count": [cell_count_val],
+            "Population Doubling": [pop_doubling_val],
+            "Study_Reference_x": [0.00],
+            "Donor": [donor_val],
+            "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
+            "Study_Reference_y": [0.00],
+            "Day / Time": [1.00]
+        }
+        
+        current_batch = pd.DataFrame(feature_dict)
 
-    # 🧠 EXPLAINABLE AI SECTION
-    st.write("---")
-    st.subheader("🧠 Explainable AI (SHAP Interpretation)")
-    
-    with st.spinner("Calculating local feature attributions..."):
-        try:
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer(current_batch)
+        # Compute live inference safely
+        prediction = float(model.predict(current_batch)[0])
+        
+        # Process calculations
+        lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
+        drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
+        risk = "HIGH (Critical)" if prediction < 80.0 else "LOW (Stable)"
 
-            # Generate and draw visual waterfall plot canvas
-            fig, ax = plt.subplots(figsize=(10, 5))
-            shap.plots.waterfall(shap_values[0], show=False)
-            plt.tight_layout()
-            st.pyplot(fig)
-        except Exception as shap_error:
-            st.error(f"Visualizer Notice: Prediction succeeded, but SHAP generation skipped: {str(shap_error)}")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("### 🔬 Process Status")
+            st.metric(label="Lactate-Glucose Ratio", value=f"{lac_glu_ratio}")
+        with col2:
+            st.markdown("### ⚙️ Drift Detection")
+            if drift_status == "NORMAL":
+                st.success("✅ NORMAL: Within Limits")
+            else:
+                st.warning("⚠️ DRIFT DETECTED")
+        with col3:
+            st.markdown("### 🎯 CQA Prediction")
+            st.metric(label="Predicted Viability", value=f"{prediction:.2f}%")
+            st.caption(f"Risk Evaluation: **{risk}**")
+
+        # Cloud Logging Transaction
+        audit_row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
+            float(round(prediction, 4)), risk, drift_status, "v1.8.0-GMP",
+            float(temp_val), float(agitation_val), float(ph_val), float(do_val),
+            float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
+            float(glucose_val), float(lactate_val)
+        ]
+
+        with st.spinner("Securing audit record in cloud ledger..."):
+            success = log_to_google_sheets(audit_row)
+
+        if success:
+            st.sidebar.success("✅ Audit trail pushed to Google Sheets.")
+        else:
+            st.sidebar.warning("⚠️ App functional, but cloud log sync failed.")
+
+        # 🧠 EXPLAINABLE AI SECTION
+        st.write("---")
+        st.subheader("🧠 Explainable AI (SHAP Interpretation)")
+        
+        with st.spinner("Calculating local feature attributions..."):
+            try:
+                explainer = shap.TreeExplainer(model)
+                shap_values = explainer(current_batch)
+
+                fig, ax = plt.subplots(figsize=(10, 5))
+                shap.plots.waterfall(shap_values[0], show=False)
+                plt.tight_layout()
+                st.pyplot(fig)
+            except Exception as shap_error:
+                st.error(f"Visualizer Notice: Prediction succeeded, but SHAP generation skipped: {str(shap_error)}")
 
 else:
     st.info("👉 Please enter the current bioreactor telemetry parameters in the sidebar and click 'Predict Viability' to view live predictions and parameter attributions.")
