@@ -74,8 +74,6 @@ cell_count_val = st.sidebar.number_input("Cell Count", value=500000.00, format="
 pop_doubling_val = st.sidebar.number_input("Population Doubling", value=1.00, format="%.2f")
 tissue_val = st.sidebar.number_input("Tissue (0=BoneMarrow, 1=Adipose)", value=1.00, format="%.2f")
 
-# Donor UI widget removed. Handled automatically in background.
-
 predict_button = st.sidebar.button("Predict Viability")
 
 # ==========================================
@@ -85,36 +83,47 @@ if predict_button:
     if model is None:
         st.error("❌ Model failed to initialize. Please verify your repository configuration.")
     else:
-        # Dictionary containing all 15 expected features (Donor is hardcoded in background)
-        feature_dict = {
-            "pH": [ph_val],
-            "Dissolved Oxygen (%)": [do_val],
-            "Glucose (mM)": [glucose_val],
-            "Lactate (mM)": [lactate_val],
-            "Temperature (oC)": [temp_val],
-            "Temperature (OC)": [temp_val],
-            "CO2 (%)": [co2_val],
-            "Agitation (rpm)": [agitation_val],
-            "Seeding Density (cells/mL)": [seeding_val],
-            "Cell Count": [cell_count_val],
-            "Population Doubling": [pop_doubling_val],
-            "Study_Reference_x": [0.00],
-            "Donor": [0.00],  # Supplied silently in background
-            "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
-            "Study_Reference_y": [0.00],
-            "Day / Time": [1.00]
+        # Map raw operator inputs to possible feature keys
+        raw_inputs = {
+            "pH": ph_val,
+            "Dissolved Oxygen (%)": do_val,
+            "Glucose (mM)": glucose_val,
+            "Lactate (mM)": lactate_val,
+            "Temperature (oC)": temp_val,
+            "Temperature (OC)": temp_val,
+            "CO2 (%)": co2_val,
+            "Agitation (rpm)": agitation_val,
+            "Seeding Density (cells/mL)": seeding_val,
+            "Cell Count": cell_count_val,
+            "Population Doubling": pop_doubling_val,
+            "Tissue (0=BoneMarrow, 1=Adipose)": tissue_val,
+            "Donor": 0.0,
+            "Study_Reference_x": 0.0,
+            "Study_Reference_y": 0.0,
+            "Day / Time": 1.0
         }
-        
-        current_batch = pd.DataFrame(feature_dict)
 
-        # Automatically align columns with the trained XGBoost model's feature signature
+        # Extract exact feature list from booster to guarantee alignment
         booster_features = model.get_booster().feature_names
-        if booster_features:
-            current_batch = current_batch.reindex(columns=booster_features, fill_value=0.0)
 
-        # Compute live inference
-        prediction = float(model.predict(current_batch)[0])
-        
+        if booster_features:
+            # Build DataFrame with exact features and column order expected by the model
+            row_data = {col: [float(raw_inputs.get(col, 0.0))] for col in booster_features}
+            current_batch = pd.DataFrame(row_data, columns=booster_features)
+        else:
+            current_batch = pd.DataFrame([raw_inputs])
+
+        # Cast to strict float64 to ensure C-API compatibility
+        current_batch = current_batch.astype(np.float64)
+
+        # Robust inference using native DMatrix to bypass C-API Columnar bugs
+        try:
+            dmatrix_input = xgb.DMatrix(current_batch)
+            prediction = float(model.get_booster().predict(dmatrix_input)[0])
+        except Exception:
+            # Fallback to standard scikit-learn API prediction
+            prediction = float(model.predict(current_batch)[0])
+
         # Process metrics
         lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
         drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
