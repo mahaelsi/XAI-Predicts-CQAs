@@ -26,13 +26,12 @@ def load_xgboost_model():
     model_obj.load_model("xgboost_cqa_model.json")
     return model_obj
 
-# Initialize global variable placeholder to avoid NameErrors
 model = None
 
 try:
     model = load_xgboost_model()
 except Exception as e:
-    st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your root directory. Detail: {str(e)}")
+    st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your repository root. Detail: {str(e)}")
 
 # ==========================================
 # 3. LIVE GOOGLE SHEETS LOGGING FUNCTION
@@ -73,8 +72,9 @@ agitation_val = st.sidebar.number_input("Agitation (rpm)", value=100.00, format=
 seeding_val = st.sidebar.number_input("Seeding Density (cells/mL)", value=10000.00, format="%.2f")
 cell_count_val = st.sidebar.number_input("Cell Count", value=500000.00, format="%.2f")
 pop_doubling_val = st.sidebar.number_input("Population Doubling", value=1.00, format="%.2f")
-donor_val = st.sidebar.number_input("Donor", value=0.00, format="%.2f")
 tissue_val = st.sidebar.number_input("Tissue (0=BoneMarrow, 1=Adipose)", value=1.00, format="%.2f")
+
+# Donor UI widget removed. Handled automatically in background.
 
 predict_button = st.sidebar.button("Predict Viability")
 
@@ -83,22 +83,23 @@ predict_button = st.sidebar.button("Predict Viability")
 # ==========================================
 if predict_button:
     if model is None:
-        st.error("❌ Cannot calculate prediction because the XGBoost model failed to initialize. Please check your repository files.")
+        st.error("❌ Model failed to initialize. Please verify your repository configuration.")
     else:
-        # Match signature parameters exactly to the model topology structure
+        # Dictionary containing all 15 expected features (Donor is hardcoded in background)
         feature_dict = {
             "pH": [ph_val],
             "Dissolved Oxygen (%)": [do_val],
             "Glucose (mM)": [glucose_val],
             "Lactate (mM)": [lactate_val],
-            "Temperature (OC)": [temp_val], 
+            "Temperature (oC)": [temp_val],
+            "Temperature (OC)": [temp_val],
             "CO2 (%)": [co2_val],
             "Agitation (rpm)": [agitation_val],
             "Seeding Density (cells/mL)": [seeding_val],
             "Cell Count": [cell_count_val],
             "Population Doubling": [pop_doubling_val],
             "Study_Reference_x": [0.00],
-            "Donor": [donor_val],
+            "Donor": [0.00],  # Supplied silently in background
             "Tissue (0=BoneMarrow, 1=Adipose)": [tissue_val],
             "Study_Reference_y": [0.00],
             "Day / Time": [1.00]
@@ -106,10 +107,15 @@ if predict_button:
         
         current_batch = pd.DataFrame(feature_dict)
 
-        # Compute live inference safely
+        # Automatically align columns with the trained XGBoost model's feature signature
+        booster_features = model.get_booster().feature_names
+        if booster_features:
+            current_batch = current_batch.reindex(columns=booster_features, fill_value=0.0)
+
+        # Compute live inference
         prediction = float(model.predict(current_batch)[0])
         
-        # Process calculations
+        # Process metrics
         lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
         drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
         risk = "HIGH (Critical)" if prediction < 80.0 else "LOW (Stable)"
@@ -132,7 +138,7 @@ if predict_button:
         # Cloud Logging Transaction
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-            float(round(prediction, 4)), risk, drift_status, "v1.8.0-GMP",
+            float(round(prediction, 4)), risk, drift_status, "v1.9.0-GMP",
             float(temp_val), float(agitation_val), float(ph_val), float(do_val),
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
