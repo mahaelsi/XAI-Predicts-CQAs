@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+import os
 
 # ==========================================
 # 1. PAGE INITIALIZATION & CONFIGURATION
@@ -34,11 +35,31 @@ except Exception as e:
     st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your repository root. Detail: {str(e)}")
 
 # ==========================================
-# 3. LIVE GOOGLE SHEETS LOGGING FUNCTION
+# 3. APPEND-ONLY AUDIT LEDGER FUNCTION
 # ==========================================
-def log_to_google_sheets(row_data):
+def log_to_audit_ledger(row_data, header_names):
+    """
+    Writes predictions to both an append-only local ledger CSV file
+    and Google Sheets for double redundancy and audit compliance.
+    """
+    # 1. Append to local immutable CSV ledger
+    ledger_file = "audit_ledger.csv"
     try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        file_exists = os.path.exists(ledger_file)
+        ledger_df = pd.DataFrame([row_data], columns=header_names)
+        ledger_df.to_csv(ledger_file, mode='a', header=not file_exists, index=False)
+        local_success = True
+    except Exception as local_err:
+        local_success = False
+
+    # 2. Sync to Google Sheets cloud ledger
+    cloud_success = False
+    cloud_msg = ""
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
         secret_info = st.secrets["gcp_service_account"]
         
         if "private_key" in secret_info and "\\n" in secret_info["private_key"]:
@@ -48,13 +69,16 @@ def log_to_google_sheets(row_data):
         creds = Credentials.from_service_account_info(secret_info, scopes=scopes)
         client = gspread.authorize(creds)
         
-        spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit")
+        # Open Google Sheet by Spreadsheet Key
+        sheet_key = "1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4"
+        spreadsheet = client.open_by_key(sheet_key)
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
-        return True
+        cloud_success = True
     except Exception as e:
-        st.sidebar.error(f"❌ Cloud Audit Logging Failed: {str(e)}")
-        return False
+        cloud_msg = str(e)
+
+    return local_success, cloud_success, cloud_msg
 
 # ==========================================
 # 4. OPERATOR INPUT PANEL (SIDEBAR)
@@ -107,21 +131,18 @@ if predict_button:
         booster_features = model.get_booster().feature_names
 
         if booster_features:
-            # Build DataFrame with exact features and column order expected by the model
             row_data = {col: [float(raw_inputs.get(col, 0.0))] for col in booster_features}
             current_batch = pd.DataFrame(row_data, columns=booster_features)
         else:
             current_batch = pd.DataFrame([raw_inputs])
 
-        # Cast to strict float64 to ensure C-API compatibility
         current_batch = current_batch.astype(np.float64)
 
-        # Robust inference using native DMatrix to bypass C-API Columnar bugs
+        # Robust inference using native DMatrix to bypass C-API Columnar issues
         try:
             dmatrix_input = xgb.DMatrix(current_batch)
             prediction = float(model.get_booster().predict(dmatrix_input)[0])
         except Exception:
-            # Fallback to standard scikit-learn API prediction
             prediction = float(model.predict(current_batch)[0])
 
         # Process metrics
@@ -144,7 +165,14 @@ if predict_button:
             st.metric(label="Predicted Viability", value=f"{prediction:.2f}%")
             st.caption(f"Risk Evaluation: **{risk}**")
 
-        # Cloud Logging Transaction
+        # Prepare audit record entries
+        ledger_headers = [
+            "Timestamp", "Operator", "Predicted_Viability", "Risk_Evaluation",
+            "Drift_Status", "App_Version", "Temperature", "Agitation",
+            "pH", "Dissolved_Oxygen", "Seeding_Density", "Tissue_Type",
+            "Glucose", "Lactate"
+        ]
+        
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
             float(round(prediction, 4)), risk, drift_status, "v1.9.0-GMP",
@@ -153,13 +181,15 @@ if predict_button:
             float(glucose_val), float(lactate_val)
         ]
 
-        with st.spinner("Securing audit record in cloud ledger..."):
-            success = log_to_google_sheets(audit_row)
+        with st.spinner("Recording entry in append-only audit ledger..."):
+            local_ok, cloud_ok, cloud_err = log_to_audit_ledger(audit_row, ledger_headers)
 
-        if success:
-            st.sidebar.success("✅ Audit trail pushed to Google Sheets.")
+        if cloud_ok:
+            st.sidebar.success("✅ Cloud & Local audit ledger updated.")
+        elif local_ok:
+            st.sidebar.warning(f"⚠️ Appended to local audit_ledger.csv (Cloud sync pending: {cloud_err})")
         else:
-            st.sidebar.warning("⚠️ App functional, but cloud log sync failed.")
+            st.sidebar.error("❌ Failed to update audit ledger.")
 
         # 🧠 EXPLAINABLE AI SECTION
         st.write("---")
@@ -170,8 +200,19 @@ if predict_button:
                 explainer = shap.TreeExplainer(model)
                 shap_values = explainer(current_batch)
 
-                fig, ax = plt.subplots(figsize=(10, 5))
-                shap.plots.waterfall(shap_values[0], show=False)
+                num_features = len(current_batch.columns)
+                
+                # Dynamic height ensures all feature rows fit comfortably without crowding
+                fig_height = max(6, int(num_features * 0.45))
+                fig, ax = plt.subplots(figsize=(10, fig_height))
+
+                # max_display ensures EVERY feature is listed individually (no "X other features")
+                shap.plots.waterfall(
+                    shap_values[0], 
+                    max_display=num_features, 
+                    show=False
+                )
+                
                 plt.tight_layout()
                 st.pyplot(fig)
             except Exception as shap_error:
