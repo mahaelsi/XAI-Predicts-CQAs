@@ -64,13 +64,13 @@ def log_to_audit_ledger(row_data, header_names):
         # Convert immutable AttrDict to standard dict for modification
         secret_dict = dict(st.secrets["gcp_service_account"])
         
-        # Sanitize Private Key PEM Formatting
+        # Key Sanitization Logic
         if "private_key" in secret_dict:
             pk = str(secret_dict["private_key"]).strip()
-            # Remove surrounding double/single quotes if present from copy-paste
+            # Strip surrounding quotes if present
             if (pk.startswith('"') and pk.endswith('"')) or (pk.startswith("'") and pk.endswith("'")):
-                pk = pk[1:-1]
-            # Convert escaped literal \n characters to real line breaks
+                pk = pk[1:-1].strip()
+            # Convert escape sequences
             pk = pk.replace("\\n", "\n")
             secret_dict["private_key"] = pk
 
