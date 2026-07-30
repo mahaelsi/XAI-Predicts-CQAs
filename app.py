@@ -49,7 +49,7 @@ def log_to_audit_ledger(row_data, header_names):
         ledger_df = pd.DataFrame([row_data], columns=header_names)
         ledger_df.to_csv(ledger_file, mode='a', header=not file_exists, index=False)
         local_success = True
-    except Exception as local_err:
+    except Exception:
         local_success = False
 
     # 2. Sync to Google Sheets cloud ledger
@@ -60,13 +60,21 @@ def log_to_audit_ledger(row_data, header_names):
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        secret_info = st.secrets["gcp_service_account"]
         
-        if "private_key" in secret_info and "\\n" in secret_info["private_key"]:
-            secret_info = dict(secret_info)
-            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
+        # Convert immutable AttrDict to standard dict for modification
+        secret_dict = dict(st.secrets["gcp_service_account"])
+        
+        # Sanitize Private Key PEM Formatting
+        if "private_key" in secret_dict:
+            pk = str(secret_dict["private_key"]).strip()
+            # Remove surrounding double/single quotes if present from copy-paste
+            if (pk.startswith('"') and pk.endswith('"')) or (pk.startswith("'") and pk.endswith("'")):
+                pk = pk[1:-1]
+            # Convert escaped literal \n characters to real line breaks
+            pk = pk.replace("\\n", "\n")
+            secret_dict["private_key"] = pk
 
-        creds = Credentials.from_service_account_info(secret_info, scopes=scopes)
+        creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
         # Open Google Sheet by Spreadsheet Key
@@ -206,7 +214,7 @@ if predict_button:
                 fig_height = max(6, int(num_features * 0.45))
                 fig, ax = plt.subplots(figsize=(10, fig_height))
 
-                # max_display ensures EVERY feature is listed individually (no "X other features")
+                # max_display ensures EVERY feature is listed individually
                 shap.plots.waterfall(
                     shap_values[0], 
                     max_display=num_features, 
