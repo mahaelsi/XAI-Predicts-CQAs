@@ -40,6 +40,10 @@ except Exception as e:
 # 3. APPEND-ONLY AUDIT LEDGER FUNCTION
 # ==========================================
 def log_to_audit_ledger(row_data, header_names):
+    """
+    Writes predictions to both an append-only local ledger CSV file
+    and Google Sheets for double redundancy and audit compliance.
+    """
     # 1. Append to local immutable CSV ledger
     ledger_file = "audit_ledger.csv"
     try:
@@ -59,7 +63,7 @@ def log_to_audit_ledger(row_data, header_names):
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Load credentials using Base64
+        # Load credentials from Base64 or standard JSON
         if "gcp_service_account_b64" in st.secrets:
             b64_str = st.secrets["gcp_service_account_b64"]
             json_bytes = base64.b64decode(b64_str)
@@ -76,7 +80,7 @@ def log_to_audit_ledger(row_data, header_names):
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Open Google Sheet by Cleaned Key
+        # Open Google Sheet by Key
         sheet_key = "1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4".strip()
         spreadsheet = client.open_by_key(sheet_key)
         worksheet = spreadsheet.sheet1
@@ -84,17 +88,18 @@ def log_to_audit_ledger(row_data, header_names):
         cloud_success = True
     except Exception as e:
         sa_email = secret_dict.get("client_email", "Unknown") if 'secret_dict' in locals() else "N/A"
-        cloud_msg = f"{e} | (Shared with {sa_email}?)"
+        cloud_msg = f"{e} | Verify sheet is saved as native 'Google Sheet' and shared with {sa_email}"
 
     return local_success, cloud_success, cloud_msg
+
 # ==========================================
 # 4. OPERATOR INPUT PANEL (SIDEBAR)
 # ==========================================
 st.sidebar.markdown("### 🎛️ Operator Input Panel")
 st.sidebar.info("Enter precise bioreactor parameters below to simulate a real-time batch prediction.")
 
-ph_val = st.sidebar.number_input("pH", value=7.00, format="%.2f")
-do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=60.00, format="%.2f")
+ph_val = st.sidebar.number_input("pH", value=7.20, format="%.2f")
+do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=50.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
 lactate_val = st.sidebar.number_input("Lactate (mM)", value=15.00, format="%.2f")
 temp_val = st.sidebar.number_input("Temperature (oC)", value=37.00, format="%.2f")
@@ -114,62 +119,97 @@ if predict_button:
     if model is None:
         st.error("❌ Model failed to initialize. Please verify your repository configuration.")
     else:
-        # Map raw operator inputs to possible feature keys
-        raw_inputs = {
-            "pH": ph_val,
-            "Dissolved Oxygen (%)": do_val,
-            "Glucose (mM)": glucose_val,
-            "Lactate (mM)": lactate_val,
-            "Temperature (oC)": temp_val,
-            "Temperature (OC)": temp_val,
-            "CO2 (%)": co2_val,
-            "Agitation (rpm)": agitation_val,
-            "Seeding Density (cells/mL)": seeding_val,
-            "Cell Count": cell_count_val,
-            "Population Doubling": pop_doubling_val,
-            "Tissue (0=BoneMarrow, 1=Adipose)": tissue_val,
+        # Calculate derived metabolic metrics required by the model
+        lac_glu_ratio = float(round(lactate_val / glucose_val, 4)) if glucose_val > 0 else 0.0
+        metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
+        stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
+
+        # Full feature mapping covering exact model booster feature names
+        feature_mapping = {
             "Donor": 0.0,
+            "Tissue": float(tissue_val),
+            "pH": float(ph_val),
+            "CO2 (%)": float(co2_val),
+            "DO": float(do_val),
+            "Dissolved Oxygen (%)": float(do_val),
+            "Glucose": float(glucose_val),
+            "Glucose (mM)": float(glucose_val),
+            "Lactate": float(lactate_val),
+            "Lactate (mM)": float(lactate_val),
+            "Temperature (oC)": float(temp_val),
+            "Agitation (rpm)": float(agitation_val),
+            "Seeding Density (cells/mL)": float(seeding_val),
+            "Cell Count": float(cell_count_val),
+            "Population Doubling": float(pop_doubling_val),
+            "Lactate_Glucose_Ratio": lac_glu_ratio,
+            "Metabolic_Load": metabolic_load,
+            "Culture_Stress_Index": stress_index,
+            "Day / Time": 1.0,
             "Study_Reference_x": 0.0,
-            "Study_Reference_y": 0.0,
-            "Day / Time": 1.0
+            "Study_Reference_y": 0.0
         }
 
-        # Extract exact feature list from booster to guarantee alignment
+        # Align exact features with XGBoost booster
         booster_features = model.get_booster().feature_names
 
         if booster_features:
-            row_data = {col: [float(raw_inputs.get(col, 0.0))] for col in booster_features}
+            row_data = {col: [feature_mapping.get(col, 0.0)] for col in booster_features}
             current_batch = pd.DataFrame(row_data, columns=booster_features)
         else:
-            current_batch = pd.DataFrame([raw_inputs])
+            current_batch = pd.DataFrame([feature_mapping])
 
         current_batch = current_batch.astype(np.float64)
 
-        # Robust inference using native DMatrix to bypass C-API Columnar issues
+        # Run inference
         try:
             dmatrix_input = xgb.DMatrix(current_batch)
-            prediction = float(model.get_booster().predict(dmatrix_input)[0])
+            raw_prediction = float(model.get_booster().predict(dmatrix_input)[0])
         except Exception:
-            prediction = float(model.predict(current_batch)[0])
+            raw_prediction = float(model.predict(current_batch)[0])
 
-        # Process metrics
-        lac_glu_ratio = round(lactate_val / glucose_val, 2) if glucose_val != 0 else 0.0
-        drift_status = "NORMAL" if (7.0 <= ph_val <= 7.4 and 40.0 <= do_val <= 80.0) else "DRIFT DETECTED"
-        risk = "HIGH (Critical)" if prediction < 80.0 else "LOW (Stable)"
+        # Automatically handle decimal vs percentage prediction scaling
+        predicted_viability_pct = raw_prediction * 100.0 if raw_prediction <= 1.0 else raw_prediction
+        predicted_viability_pct = max(0.0, min(100.0, predicted_viability_pct))  # Clamp between 0-100%
+
+        # COMPREHENSIVE GMP DRIFT DETECTION
+        drift_reasons = []
+        if not (7.00 <= ph_val <= 7.40):
+            drift_reasons.append(f"pH ({ph_val})")
+        if not (40.0 <= do_val <= 80.0):
+            drift_reasons.append(f"DO ({do_val}%)")
+        if not (36.5 <= temp_val <= 37.5):
+            drift_reasons.append(f"Temp ({temp_val}°C)")
+        if not (4.5 <= co2_val <= 5.5):
+            drift_reasons.append(f"CO2 ({co2_val}%)")
+        if not (80.0 <= agitation_val <= 120.0):
+            drift_reasons.append(f"Agitation ({agitation_val} rpm)")
+        if glucose_val < 3.0:
+            drift_reasons.append(f"Glucose Low ({glucose_val} mM)")
+        if lactate_val > 25.0:
+            drift_reasons.append(f"Lactate High ({lactate_val} mM)")
+
+        if drift_reasons:
+            drift_status = "DRIFT DETECTED"
+            drift_display_text = f"⚠️ DRIFT: {', '.join(drift_reasons)}"
+        else:
+            drift_status = "NORMAL"
+            drift_display_text = "✅ NORMAL: Within Limits"
+
+        risk = "HIGH (Critical)" if predicted_viability_pct < 80.0 else "LOW (Stable)"
 
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown("### 🔬 Process Status")
-            st.metric(label="Lactate-Glucose Ratio", value=f"{lac_glu_ratio}")
+            st.metric(label="Lactate-Glucose Ratio", value=f"{lac_glu_ratio:.2f}")
         with col2:
             st.markdown("### ⚙️ Drift Detection")
             if drift_status == "NORMAL":
-                st.success("✅ NORMAL: Within Limits")
+                st.success(drift_display_text)
             else:
-                st.warning("⚠️ DRIFT DETECTED")
+                st.warning(drift_display_text)
         with col3:
             st.markdown("### 🎯 CQA Prediction")
-            st.metric(label="Predicted Viability", value=f"{prediction:.2f}%")
+            st.metric(label="Predicted Viability", value=f"{predicted_viability_pct:.2f}%")
             st.caption(f"Risk Evaluation: **{risk}**")
 
         # Prepare audit record entries
@@ -182,7 +222,7 @@ if predict_button:
         
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-            float(round(prediction, 4)), risk, drift_status, "v1.9.0-GMP",
+            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.0.0-GMP",
             float(temp_val), float(agitation_val), float(ph_val), float(do_val),
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
@@ -208,12 +248,9 @@ if predict_button:
                 shap_values = explainer(current_batch)
 
                 num_features = len(current_batch.columns)
-                
-                # Dynamic height ensures all feature rows fit comfortably without crowding
                 fig_height = max(6, int(num_features * 0.45))
                 fig, ax = plt.subplots(figsize=(10, fig_height))
 
-                # max_display ensures EVERY feature is listed individually
                 shap.plots.waterfall(
                     shap_values[0], 
                     max_display=num_features, 
