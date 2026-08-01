@@ -81,7 +81,7 @@ def log_to_audit_ledger(row_data, header_names):
         client = gspread.authorize(creds)
         
         # Open Google Sheet by Spreadsheet Key
-        sheet_key = "1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4"
+        sheet_key = "1upEoaEmuhZeLseIXfSz-9wBeUtVJTORXHh_lf8B2AFQ/edit?gid=1289510440#gid=1289510440"
         spreadsheet = client.open_by_key(sheet_key)
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
