@@ -40,11 +40,6 @@ except Exception as e:
 # 3. APPEND-ONLY AUDIT LEDGER FUNCTION
 # ==========================================
 def log_to_audit_ledger(row_data, header_names):
-    """
-    Writes predictions to both an append-only local ledger CSV file
-    and Google Sheets for double redundancy and audit compliance.
-    """
-st.sidebar.info(f"Service Account Email: {secret_dict.get('client_email')}")
     # 1. Append to local immutable CSV ledger
     ledger_file = "audit_ledger.csv"
     try:
@@ -64,7 +59,7 @@ st.sidebar.info(f"Service Account Email: {secret_dict.get('client_email')}")
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Load credentials using Base64 (Bulletproof against browser formatting errors)
+        # Load credentials using Base64
         if "gcp_service_account_b64" in st.secrets:
             b64_str = st.secrets["gcp_service_account_b64"]
             json_bytes = base64.b64decode(b64_str)
@@ -81,17 +76,17 @@ st.sidebar.info(f"Service Account Email: {secret_dict.get('client_email')}")
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Open Google Sheet by Spreadsheet Key
-        sheet_key = "1upEoaEmuhZeLseIXfSz-9wBeUtVJTORXHh_lf8B2AFQ/edit?gid=1289510440#gid=1289510440"
+        # Open Google Sheet by Cleaned Key
+        sheet_key = "1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4".strip()
         spreadsheet = client.open_by_key(sheet_key)
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
         cloud_success = True
     except Exception as e:
-        cloud_msg = str(e)
+        sa_email = secret_dict.get("client_email", "Unknown") if 'secret_dict' in locals() else "N/A"
+        cloud_msg = f"{e} | (Shared with {sa_email}?)"
 
     return local_success, cloud_success, cloud_msg
-
 # ==========================================
 # 4. OPERATOR INPUT PANEL (SIDEBAR)
 # ==========================================
