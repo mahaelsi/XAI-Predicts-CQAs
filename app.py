@@ -10,6 +10,7 @@ from datetime import datetime
 import os
 import json
 import base64
+import re
 
 # ==========================================
 # 1. PAGE INITIALIZATION & CONFIGURATION
@@ -19,6 +20,17 @@ st.set_page_config(page_title="Viability Prediction XAI Tool", layout="wide")
 st.title("🧪 Viability Prediction XAI Tool")
 st.markdown("##### Good Manufacturing Practice (GMP) Compliant Predictive Monitoring Dashboard")
 st.write("---")
+
+# Default fallback URL/ID if st.secrets['sheet_url'] is not set
+DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit"
+
+def extract_spreadsheet_id(url_or_id: str) -> str:
+    """Safely extracts the 44-character Google Sheet ID from any URL or string."""
+    url_or_id = str(url_or_id).strip()
+    match = re.search(r"/d/([a-zA-Z0-9-_]+)", url_or_id)
+    if match:
+        return match.group(1)
+    return url_or_id  # Assume raw ID if no match
 
 # ==========================================
 # 2. CACHED MODEL LOADING
@@ -30,21 +42,20 @@ def load_xgboost_model():
     return model_obj
 
 model = None
-
 try:
     model = load_xgboost_model()
 except Exception as e:
     st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your repository root. Detail: {str(e)}")
 
 # ==========================================
-# 3. APPEND-ONLY AUDIT LEDGER FUNCTION
+# 3. BULLETPROOF AUDIT LEDGER FUNCTION
 # ==========================================
 def log_to_audit_ledger(row_data, header_names):
     """
-    Writes predictions to both an append-only local ledger CSV file
-    and Google Sheets for double redundancy and audit compliance.
+    Writes predictions to an append-only local ledger CSV file
+    and syncs to Google Sheets dynamically using the sheet URL from secrets.
     """
-    # 1. Append to local immutable CSV ledger
+    # 1. Append to local CSV ledger
     ledger_file = "audit_ledger.csv"
     try:
         file_exists = os.path.exists(ledger_file)
@@ -57,13 +68,15 @@ def log_to_audit_ledger(row_data, header_names):
     # 2. Sync to Google Sheets cloud ledger
     cloud_success = False
     cloud_msg = ""
+    sa_email = "Unknown"
+
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Load credentials from Base64 or standard JSON
+        # Load GCP Service Account Credentials
         if "gcp_service_account_b64" in st.secrets:
             b64_str = st.secrets["gcp_service_account_b64"]
             json_bytes = base64.b64decode(b64_str)
@@ -77,18 +90,24 @@ def log_to_audit_ledger(row_data, header_names):
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
 
+        sa_email = secret_dict.get("client_email", "Unknown")
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Open Google Sheet by Key
-        sheet_key = "1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4".strip()
-        spreadsheet = client.open_by_key(sheet_key)
+        # Dynamically fetch target sheet URL/ID from Secrets or Fallback
+        target_input = st.secrets.get("sheet_url", DEFAULT_SHEET_URL)
+        sheet_id = extract_spreadsheet_id(target_input)
+
+        # Open sheet and append row
+        spreadsheet = client.open_by_key(sheet_id)
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
         cloud_success = True
+
+    except gspread.exceptions.SpreadsheetNotFound:
+        cloud_msg = f"Sheet ID '{sheet_id}' not found. Please verify the URL in Secrets and ensure it is shared with {sa_email} as Editor."
     except Exception as e:
-        sa_email = secret_dict.get("client_email", "Unknown") if 'secret_dict' in locals() else "N/A"
-        cloud_msg = f"{e} | Verify sheet is saved as native 'Google Sheet' and shared with {sa_email}"
+        cloud_msg = f"{str(e)} | Target Sheet ID: [{sheet_id}] | Shared with: [{sa_email}]"
 
     return local_success, cloud_success, cloud_msg
 
@@ -119,12 +138,12 @@ if predict_button:
     if model is None:
         st.error("❌ Model failed to initialize. Please verify your repository configuration.")
     else:
-        # Calculate derived metabolic metrics required by the model
+        # Calculate derived metabolic metrics
         lac_glu_ratio = float(round(lactate_val / glucose_val, 4)) if glucose_val > 0 else 0.0
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        # Full feature mapping covering exact model booster feature names
+        # Feature mapping for XGBoost booster alignment
         feature_mapping = {
             "Donor": 0.0,
             "Tissue": float(tissue_val),
@@ -149,7 +168,6 @@ if predict_button:
             "Study_Reference_y": 0.0
         }
 
-        # Align exact features with XGBoost booster
         booster_features = model.get_booster().feature_names
 
         if booster_features:
@@ -167,11 +185,11 @@ if predict_button:
         except Exception:
             raw_prediction = float(model.predict(current_batch)[0])
 
-        # Automatically handle decimal vs percentage prediction scaling
+        # Automatically scale prediction between 0% and 100%
         predicted_viability_pct = raw_prediction * 100.0 if raw_prediction <= 1.0 else raw_prediction
-        predicted_viability_pct = max(0.0, min(100.0, predicted_viability_pct))  # Clamp between 0-100%
+        predicted_viability_pct = max(0.0, min(100.0, predicted_viability_pct))
 
-        # COMPREHENSIVE GMP DRIFT DETECTION
+        # Comprehensive GMP Drift Detection
         drift_reasons = []
         if not (7.00 <= ph_val <= 7.40):
             drift_reasons.append(f"pH ({ph_val})")
@@ -222,7 +240,7 @@ if predict_button:
         
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.0.0-GMP",
+            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.1.0-GMP",
             float(temp_val), float(agitation_val), float(ph_val), float(do_val),
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
