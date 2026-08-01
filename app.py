@@ -9,7 +9,6 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import os
 import json
-import re
 
 # ==========================================
 # 1. PAGE INITIALIZATION & CONFIGURATION
@@ -39,28 +38,6 @@ except Exception as e:
 # ==========================================
 # 3. APPEND-ONLY AUDIT LEDGER FUNCTION
 # ==========================================
-def sanitize_pem_key(raw_key):
-    """Strips stray characters/URLs and standardizes PEM formatting."""
-    raw_key = str(raw_key).replace("\\n", "\n").strip()
-    
-    # Extract only text between BEGIN and END tags
-    match = re.search(r'(-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----)', raw_key)
-    if match:
-        clean_key = match.group(1)
-        # Ensure header/footer line breaks are standard
-        lines = clean_key.split('\n')
-        header = lines[0].strip()
-        footer = lines[-1].strip()
-        # Clean middle base64 content of any invalid non-base64 characters (like periods)
-        middle = "".join(lines[1:-1]).replace(" ", "").replace("\r", "")
-        # Remove any accidental URLs or dots in the base64 payload
-        middle = re.sub(r'[^A-Za-z0-9+/=]', '', middle)
-        
-        # Reconstruct clean PEM string
-        formatted_body = "\n".join([middle[i:i+64] for i in range(0, len(middle), 64)])
-        return f"{header}\n{formatted_body}\n{footer}\n"
-    return raw_key
-
 def log_to_audit_ledger(row_data, header_names):
     """
     Writes predictions to both an append-only local ledger CSV file
@@ -85,7 +62,7 @@ def log_to_audit_ledger(row_data, header_names):
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Support both gcp_json single string and gcp_service_account table
+        # Load secret credentials
         if "gcp_json" in st.secrets:
             secret_dict = json.loads(st.secrets["gcp_json"])
         elif "gcp_service_account" in st.secrets:
@@ -93,9 +70,9 @@ def log_to_audit_ledger(row_data, header_names):
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
 
-        # Sanitize Private Key
+        # Unescape escaped newlines if present
         if "private_key" in secret_dict:
-            secret_dict["private_key"] = sanitize_pem_key(secret_dict["private_key"])
+            secret_dict["private_key"] = secret_dict["private_key"].replace("\\n", "\n")
 
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
