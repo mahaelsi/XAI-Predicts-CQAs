@@ -21,7 +21,7 @@ st.title("🧪 Viability Prediction XAI Tool")
 st.markdown("##### Good Manufacturing Practice (GMP) Compliant Predictive Monitoring Dashboard")
 st.write("---")
 
-DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit"
+DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXfSz-9wBeUtVJTORXHh_lf8B2AFQ/edit"
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
     """Safely extracts the 44-character Google Sheet ID from any URL or raw ID string."""
@@ -47,12 +47,12 @@ except Exception as e:
     st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your repository root. Detail: {str(e)}")
 
 # ==========================================
-# 3. UNICODE-SAFE AUDIT LEDGER FUNCTION
+# 3. CRASH-PROOF AUDIT LEDGER FUNCTION
 # ==========================================
 def log_to_audit_ledger(row_data, header_names):
     """
     Writes predictions to local CSV and syncs to Google Sheets.
-    Includes unicode-safe decoding to prevent byte decoding crashes.
+    Includes defensive JSON slicing to prevent char 2392 JSONDecodeError crashes.
     """
     # 1. Append to local CSV ledger
     ledger_file = "audit_ledger.csv"
@@ -81,25 +81,18 @@ def log_to_audit_ledger(row_data, header_names):
         
         secret_dict = None
 
-        # Robust Secret Parsing (Prevents UnicodeDecodeError)
         if "gcp_service_account" in st.secrets:
             secret_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in secret_dict:
                 secret_dict["private_key"] = str(secret_dict["private_key"]).replace("\\n", "\n")
         elif "gcp_service_account_b64" in st.secrets:
-            b64_str = st.secrets["gcp_service_account_b64"]
-            json_bytes = base64.b64decode(b64_str)
-            try:
-                json_str = json_bytes.decode("utf-8", errors="replace")
-            except Exception:
-                json_str = json_bytes.decode("latin-1")
+            raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
+            json_bytes = base64.b64decode(raw_b64)
+            json_str = json_bytes.decode("utf-8", errors="ignore").strip()
+            # Safely truncate extra characters past the closing brace
+            if "}" in json_str:
+                json_str = json_str[:json_str.rfind("}") + 1]
             secret_dict = json.loads(json_str)
-        elif "gcp_json" in st.secrets:
-            gcp_val = st.secrets["gcp_json"]
-            if isinstance(gcp_val, dict):
-                secret_dict = dict(gcp_val)
-            else:
-                secret_dict = json.loads(str(gcp_val))
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
 
@@ -149,49 +142,45 @@ if predict_button:
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        # Comprehensive feature mapping covering exact feature key variations
-        feature_mapping = {
-            "Donor": 0.0,
-            "Tissue": float(tissue_val),
-            "pH": float(ph_val),
-            "CO2 (%)": float(co2_val),
-            "CO2": float(co2_val),
-            "DO": float(do_val),
-            "Dissolved Oxygen (%)": float(do_val),
-            "Dissolved_Oxygen": float(do_val),
-            "Glucose": float(glucose_val),
-            "Glucose (mM)": float(glucose_val),
-            "Lactate": float(lactate_val),
-            "Lactate (mM)": float(lactate_val),
-            "Temperature (oC)": float(temp_val),
-            "Temperature": float(temp_val),
-            "Agitation (rpm)": float(agitation_val),
-            "Agitation": float(agitation_val),
-            "Seeding Density (cells/mL)": float(seeding_val),
-            "Seeding Density": float(seeding_val),
-            "Seeding_Density": float(seeding_val),
-            "Cell Count": float(cell_count_val),
-            "Cell_Count": float(cell_count_val),
-            "Population Doubling": float(pop_doubling_val),
-            "Population_Doubling": float(pop_doubling_val),
-            "Lactate_Glucose_Ratio": lac_glu_ratio,
-            "Metabolic_Load": metabolic_load,
-            "Culture_Stress_Index": stress_index,
-            "Day / Time": 1.0,
-            "Day_Time": 1.0,
-            "Study_Reference_x": 0.0,
-            "Study_Reference_y": 0.0
-        }
+        # Positional ordering matching training feature vector
+        ordered_input_values = [
+            0.0,                        # 0: Donor
+            float(tissue_val),          # 1: Tissue
+            float(ph_val),              # 2: pH
+            float(co2_val),             # 3: CO2 (%)
+            float(do_val),              # 4: DO
+            float(glucose_val),         # 5: Glucose
+            float(lactate_val),         # 6: Lactate
+            float(temp_val),            # 7: Temperature
+            float(agitation_val),       # 8: Agitation
+            float(seeding_val),         # 9: Seeding Density
+            float(cell_count_val),      # 10: Cell Count
+            float(pop_doubling_val),    # 11: Population Doubling
+            lac_glu_ratio,              # 12: Lactate_Glucose_Ratio
+            metabolic_load,             # 13: Metabolic_Load
+            stress_index,               # 14: Culture_Stress_Index
+            1.0,                        # 15: Day / Time
+            0.0,                        # 16: Study_Reference_x
+            0.0                         # 17: Study_Reference_y
+        ]
 
-        # Extract native Booster object
+        standard_feature_names = [
+            "Donor", "Tissue", "pH", "CO2 (%)", "DO", "Glucose", "Lactate",
+            "Temperature (oC)", "Agitation (rpm)", "Seeding Density (cells/mL)",
+            "Cell Count", "Population Doubling", "Lactate_Glucose_Ratio",
+            "Metabolic_Load", "Culture_Stress_Index", "Day / Time",
+            "Study_Reference_x", "Study_Reference_y"
+        ]
+
         booster = model.get_booster()
         booster_features = booster.feature_names
 
-        if booster_features:
-            row_data = {col: [feature_mapping.get(col, 0.0)] for col in booster_features}
-            current_batch = pd.DataFrame(row_data, columns=booster_features)
+        # Map features positional fallback to ensure no 0.0 default overrides occur
+        if booster_features and len(booster_features) == len(ordered_input_values):
+            row_dict = {f_name: [val] for f_name, val in zip(booster_features, ordered_input_values)}
+            current_batch = pd.DataFrame(row_dict)
         else:
-            current_batch = pd.DataFrame([feature_mapping])
+            current_batch = pd.DataFrame([ordered_input_values[:18]], columns=standard_feature_names[:18])
 
         current_batch = current_batch.astype(np.float64)
 
@@ -254,7 +243,7 @@ if predict_button:
         
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.3.0-GMP",
+            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.4.0-GMP",
             float(temp_val), float(agitation_val), float(ph_val), float(do_val),
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
@@ -270,15 +259,18 @@ if predict_button:
         else:
             st.sidebar.error("❌ Failed to update audit ledger.")
 
-        # 🧠 EXPLAINABLE AI SECTION (DYNAMIC C++ BOOSTER BINDING)
+        # 🧠 EXPLAINABLE AI SECTION (DYNAMIC SHAP WATERFALL GENERATOR)
         st.write("---")
         st.subheader("🧠 Explainable AI (SHAP Interpretation)")
         
         with st.spinner("Calculating local feature attributions..."):
             try:
-                # TreeExplainer bound directly to native Booster object for exact dynamic SHAP values
-                explainer = shap.TreeExplainer(booster)
+                # Calculate SHAP attributions directly on current batch DataFrame
+                explainer = shap.TreeExplainer(model)
                 shap_values = explainer(current_batch)
+
+                # Assign human-readable display feature names to SHAP output object
+                shap_values.feature_names = standard_feature_names[:len(current_batch.columns)]
 
                 num_features = len(current_batch.columns)
                 fig_height = max(6, int(num_features * 0.45))
