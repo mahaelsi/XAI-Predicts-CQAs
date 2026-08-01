@@ -44,6 +44,7 @@ def log_to_audit_ledger(row_data, header_names):
     Writes predictions to both an append-only local ledger CSV file
     and Google Sheets for double redundancy and audit compliance.
     """
+st.sidebar.info(f"Service Account Email: {secret_dict.get('client_email')}")
     # 1. Append to local immutable CSV ledger
     ledger_file = "audit_ledger.csv"
     try:
