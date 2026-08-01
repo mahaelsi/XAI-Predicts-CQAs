@@ -21,7 +21,6 @@ st.title("🧪 Viability Prediction XAI Tool")
 st.markdown("##### Good Manufacturing Practice (GMP) Compliant Predictive Monitoring Dashboard")
 st.write("---")
 
-# Default fallback URL/ID if st.secrets['sheet_url'] is missing
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit"
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
@@ -48,14 +47,14 @@ except Exception as e:
     st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your repository root. Detail: {str(e)}")
 
 # ==========================================
-# 3. BULLETPROOF AUDIT LEDGER FUNCTION
+# 3. UNICODE-SAFE AUDIT LEDGER FUNCTION
 # ==========================================
 def log_to_audit_ledger(row_data, header_names):
     """
-    Writes predictions to an append-only local ledger CSV file
-    and syncs to Google Sheets dynamically without risk of UnboundLocalError.
+    Writes predictions to local CSV and syncs to Google Sheets.
+    Includes unicode-safe decoding to prevent byte decoding crashes.
     """
-    # 1. Local CSV logging
+    # 1. Append to local CSV ledger
     ledger_file = "audit_ledger.csv"
     try:
         file_exists = os.path.exists(ledger_file)
@@ -68,13 +67,10 @@ def log_to_audit_ledger(row_data, header_names):
     # 2. Sync to Google Sheets cloud ledger
     cloud_success = False
     cloud_msg = ""
-    
-    # PRE-INITIALIZE VARIABLES OUTSIDE TRY BLOCK TO PREVENT UNBOUND LOCAL ERRORS
     sheet_id = "UNKNOWN_ID"
     sa_email = "UNKNOWN_EMAIL"
 
     try:
-        # Resolve spreadsheet ID safely
         target_input = st.secrets.get("sheet_url", DEFAULT_SHEET_URL)
         sheet_id = extract_spreadsheet_id(target_input)
 
@@ -83,17 +79,27 @@ def log_to_audit_ledger(row_data, header_names):
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Load GCP Service Account Credentials
-        if "gcp_service_account_b64" in st.secrets:
-            b64_str = st.secrets["gcp_service_account_b64"]
-            json_bytes = base64.b64decode(b64_str)
-            secret_dict = json.loads(json_bytes.decode("utf-8"))
-        elif "gcp_json" in st.secrets:
-            secret_dict = json.loads(st.secrets["gcp_json"])
-        elif "gcp_service_account" in st.secrets:
+        secret_dict = None
+
+        # Robust Secret Parsing (Prevents UnicodeDecodeError)
+        if "gcp_service_account" in st.secrets:
             secret_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in secret_dict:
-                secret_dict["private_key"] = secret_dict["private_key"].replace("\\n", "\n")
+                secret_dict["private_key"] = str(secret_dict["private_key"]).replace("\\n", "\n")
+        elif "gcp_service_account_b64" in st.secrets:
+            b64_str = st.secrets["gcp_service_account_b64"]
+            json_bytes = base64.b64decode(b64_str)
+            try:
+                json_str = json_bytes.decode("utf-8", errors="replace")
+            except Exception:
+                json_str = json_bytes.decode("latin-1")
+            secret_dict = json.loads(json_str)
+        elif "gcp_json" in st.secrets:
+            gcp_val = st.secrets["gcp_json"]
+            if isinstance(gcp_val, dict):
+                secret_dict = dict(gcp_val)
+            else:
+                secret_dict = json.loads(str(gcp_val))
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
 
@@ -101,14 +107,12 @@ def log_to_audit_ledger(row_data, header_names):
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
 
-        # Open sheet and append row
         spreadsheet = client.open_by_key(sheet_id)
         worksheet = spreadsheet.sheet1
         worksheet.append_row(row_data)
         cloud_success = True
 
     except Exception as e:
-        # Safe access guaranteed since variables were pre-initialized above
         cloud_msg = f"{type(e).__name__}: {str(e)} | Target Sheet ID: [{sheet_id}] | Shared with: [{sa_email}]"
 
     return local_success, cloud_success, cloud_msg
@@ -145,32 +149,43 @@ if predict_button:
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        # Map inputs to model feature space
+        # Comprehensive feature mapping covering exact feature key variations
         feature_mapping = {
             "Donor": 0.0,
             "Tissue": float(tissue_val),
             "pH": float(ph_val),
             "CO2 (%)": float(co2_val),
+            "CO2": float(co2_val),
             "DO": float(do_val),
             "Dissolved Oxygen (%)": float(do_val),
+            "Dissolved_Oxygen": float(do_val),
             "Glucose": float(glucose_val),
             "Glucose (mM)": float(glucose_val),
             "Lactate": float(lactate_val),
             "Lactate (mM)": float(lactate_val),
             "Temperature (oC)": float(temp_val),
+            "Temperature": float(temp_val),
             "Agitation (rpm)": float(agitation_val),
+            "Agitation": float(agitation_val),
             "Seeding Density (cells/mL)": float(seeding_val),
+            "Seeding Density": float(seeding_val),
+            "Seeding_Density": float(seeding_val),
             "Cell Count": float(cell_count_val),
+            "Cell_Count": float(cell_count_val),
             "Population Doubling": float(pop_doubling_val),
+            "Population_Doubling": float(pop_doubling_val),
             "Lactate_Glucose_Ratio": lac_glu_ratio,
             "Metabolic_Load": metabolic_load,
             "Culture_Stress_Index": stress_index,
             "Day / Time": 1.0,
+            "Day_Time": 1.0,
             "Study_Reference_x": 0.0,
             "Study_Reference_y": 0.0
         }
 
-        booster_features = model.get_booster().feature_names
+        # Extract native Booster object
+        booster = model.get_booster()
+        booster_features = booster.feature_names
 
         if booster_features:
             row_data = {col: [feature_mapping.get(col, 0.0)] for col in booster_features}
@@ -180,12 +195,9 @@ if predict_button:
 
         current_batch = current_batch.astype(np.float64)
 
-        # Run inference
-        try:
-            dmatrix_input = xgb.DMatrix(current_batch)
-            raw_prediction = float(model.get_booster().predict(dmatrix_input)[0])
-        except Exception:
-            raw_prediction = float(model.predict(current_batch)[0])
+        # Run inference via native DMatrix
+        dmatrix_input = xgb.DMatrix(current_batch, feature_names=current_batch.columns.tolist())
+        raw_prediction = float(booster.predict(dmatrix_input)[0])
 
         # Automatically scale prediction between 0% and 100%
         predicted_viability_pct = raw_prediction * 100.0 if raw_prediction <= 1.0 else raw_prediction
@@ -242,7 +254,7 @@ if predict_button:
         
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.2.0-GMP",
+            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.3.0-GMP",
             float(temp_val), float(agitation_val), float(ph_val), float(do_val),
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
@@ -254,17 +266,18 @@ if predict_button:
         if cloud_ok:
             st.sidebar.success("✅ Cloud & Local audit ledger updated.")
         elif local_ok:
-            st.sidebar.warning(f"⚠️ Appended to local audit_ledger.csv\n\n(Cloud sync status: {cloud_err})")
+            st.sidebar.warning(f"Appended to local audit_ledger.csv\n\n(Cloud sync status: {cloud_err})")
         else:
             st.sidebar.error("❌ Failed to update audit ledger.")
 
-        # 🧠 EXPLAINABLE AI SECTION
+        # 🧠 EXPLAINABLE AI SECTION (DYNAMIC C++ BOOSTER BINDING)
         st.write("---")
         st.subheader("🧠 Explainable AI (SHAP Interpretation)")
         
         with st.spinner("Calculating local feature attributions..."):
             try:
-                explainer = shap.TreeExplainer(model)
+                # TreeExplainer bound directly to native Booster object for exact dynamic SHAP values
+                explainer = shap.TreeExplainer(booster)
                 shap_values = explainer(current_batch)
 
                 num_features = len(current_batch.columns)
