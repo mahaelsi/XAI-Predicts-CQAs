@@ -21,16 +21,16 @@ st.title("🧪 Viability Prediction XAI Tool")
 st.markdown("##### Good Manufacturing Practice (GMP) Compliant Predictive Monitoring Dashboard")
 st.write("---")
 
-# Default fallback URL/ID if st.secrets['sheet_url'] is not set
+# Default fallback URL/ID if st.secrets['sheet_url'] is missing
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1upEoaEmuhZeLseIXF-Ym7Ym5EAnvFqE69pE8nF29hI4/edit"
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
-    """Safely extracts the 44-character Google Sheet ID from any URL or string."""
+    """Safely extracts the 44-character Google Sheet ID from any URL or raw ID string."""
     url_or_id = str(url_or_id).strip()
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url_or_id)
     if match:
         return match.group(1)
-    return url_or_id  # Assume raw ID if no match
+    return url_or_id
 
 # ==========================================
 # 2. CACHED MODEL LOADING
@@ -53,9 +53,9 @@ except Exception as e:
 def log_to_audit_ledger(row_data, header_names):
     """
     Writes predictions to an append-only local ledger CSV file
-    and syncs to Google Sheets dynamically using the sheet URL from secrets.
+    and syncs to Google Sheets dynamically without risk of UnboundLocalError.
     """
-    # 1. Append to local CSV ledger
+    # 1. Local CSV logging
     ledger_file = "audit_ledger.csv"
     try:
         file_exists = os.path.exists(ledger_file)
@@ -68,9 +68,16 @@ def log_to_audit_ledger(row_data, header_names):
     # 2. Sync to Google Sheets cloud ledger
     cloud_success = False
     cloud_msg = ""
-    sa_email = "Unknown"
+    
+    # PRE-INITIALIZE VARIABLES OUTSIDE TRY BLOCK TO PREVENT UNBOUND LOCAL ERRORS
+    sheet_id = "UNKNOWN_ID"
+    sa_email = "UNKNOWN_EMAIL"
 
     try:
+        # Resolve spreadsheet ID safely
+        target_input = st.secrets.get("sheet_url", DEFAULT_SHEET_URL)
+        sheet_id = extract_spreadsheet_id(target_input)
+
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
@@ -90,13 +97,9 @@ def log_to_audit_ledger(row_data, header_names):
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
 
-        sa_email = secret_dict.get("client_email", "Unknown")
+        sa_email = secret_dict.get("client_email", "Unknown Email")
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
-        
-        # Dynamically fetch target sheet URL/ID from Secrets or Fallback
-        target_input = st.secrets.get("sheet_url", DEFAULT_SHEET_URL)
-        sheet_id = extract_spreadsheet_id(target_input)
 
         # Open sheet and append row
         spreadsheet = client.open_by_key(sheet_id)
@@ -104,10 +107,9 @@ def log_to_audit_ledger(row_data, header_names):
         worksheet.append_row(row_data)
         cloud_success = True
 
-    except gspread.exceptions.SpreadsheetNotFound:
-        cloud_msg = f"Sheet ID '{sheet_id}' not found. Please verify the URL in Secrets and ensure it is shared with {sa_email} as Editor."
     except Exception as e:
-        cloud_msg = f"{str(e)} | Target Sheet ID: [{sheet_id}] | Shared with: [{sa_email}]"
+        # Safe access guaranteed since variables were pre-initialized above
+        cloud_msg = f"{type(e).__name__}: {str(e)} | Target Sheet ID: [{sheet_id}] | Shared with: [{sa_email}]"
 
     return local_success, cloud_success, cloud_msg
 
@@ -143,7 +145,7 @@ if predict_button:
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        # Feature mapping for XGBoost booster alignment
+        # Map inputs to model feature space
         feature_mapping = {
             "Donor": 0.0,
             "Tissue": float(tissue_val),
@@ -230,7 +232,7 @@ if predict_button:
             st.metric(label="Predicted Viability", value=f"{predicted_viability_pct:.2f}%")
             st.caption(f"Risk Evaluation: **{risk}**")
 
-        # Prepare audit record entries
+        # Audit ledger logging
         ledger_headers = [
             "Timestamp", "Operator", "Predicted_Viability", "Risk_Evaluation",
             "Drift_Status", "App_Version", "Temperature", "Agitation",
@@ -240,7 +242,7 @@ if predict_button:
         
         audit_row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "System_Operator",
-            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.1.0-GMP",
+            float(round(predicted_viability_pct, 2)), risk, drift_status, "v2.2.0-GMP",
             float(temp_val), float(agitation_val), float(ph_val), float(do_val),
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
@@ -252,7 +254,7 @@ if predict_button:
         if cloud_ok:
             st.sidebar.success("✅ Cloud & Local audit ledger updated.")
         elif local_ok:
-            st.sidebar.warning(f"⚠️ Appended to local audit_ledger.csv (Cloud sync pending: {cloud_err})")
+            st.sidebar.warning(f"⚠️ Appended to local audit_ledger.csv\n\n(Cloud sync status: {cloud_err})")
         else:
             st.sidebar.error("❌ Failed to update audit ledger.")
 
@@ -281,4 +283,4 @@ if predict_button:
                 st.error(f"Visualizer Notice: Prediction succeeded, but SHAP generation skipped: {str(shap_error)}")
 
 else:
-    st.info("👉 Please enter the current bioreactor telemetry parameters in the sidebar and click 'Predict Viability' to view live predictions and parameter attributions.")
+    st.info("👉 Please enter current bioreactor telemetry parameters in sidebar and click 'Predict Viability'.")
