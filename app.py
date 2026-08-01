@@ -9,6 +9,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import os
 import json
+import base64
 
 # ==========================================
 # 1. PAGE INITIALIZATION & CONFIGURATION
@@ -62,17 +63,19 @@ def log_to_audit_ledger(row_data, header_names):
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Load secret credentials
-        if "gcp_json" in st.secrets:
+        # Load credentials using Base64 (Bulletproof against browser formatting errors)
+        if "gcp_service_account_b64" in st.secrets:
+            b64_str = st.secrets["gcp_service_account_b64"]
+            json_bytes = base64.b64decode(b64_str)
+            secret_dict = json.loads(json_bytes.decode("utf-8"))
+        elif "gcp_json" in st.secrets:
             secret_dict = json.loads(st.secrets["gcp_json"])
         elif "gcp_service_account" in st.secrets:
             secret_dict = dict(st.secrets["gcp_service_account"])
+            if "private_key" in secret_dict:
+                secret_dict["private_key"] = secret_dict["private_key"].replace("\\n", "\n")
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
-
-        # Unescape escaped newlines if present
-        if "private_key" in secret_dict:
-            secret_dict["private_key"] = secret_dict["private_key"].replace("\\n", "\n")
 
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
