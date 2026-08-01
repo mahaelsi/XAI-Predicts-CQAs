@@ -89,7 +89,6 @@ def log_to_audit_ledger(row_data, header_names):
             raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
             json_bytes = base64.b64decode(raw_b64)
             json_str = json_bytes.decode("utf-8", errors="ignore").strip()
-            # Safely truncate extra characters past the closing brace
             if "}" in json_str:
                 json_str = json_str[:json_str.rfind("}") + 1]
             secret_dict = json.loads(json_str)
@@ -142,52 +141,33 @@ if predict_button:
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        # Comprehensive lookup map for potential feature name variants
-        feature_val_map = {
-            "Donor": 0.0,
-            "Tissue": float(tissue_val),
-            "pH": float(ph_val),
-            "CO2 (%)": float(co2_val),
-            "DO": float(do_val),
-            "Glucose": float(glucose_val),
-            "Lactate": float(lactate_val),
-            "Temperature (oC)": float(temp_val),
-            "Agitation (rpm)": float(agitation_val),
-            "Seeding Density ( cells/mL)": float(seeding_val),  # Matches exact trained model key
-            "Seeding Density (cells/mL)": float(seeding_val),
-            "Cell Count": float(cell_count_val),
-            "Population Doubling": float(pop_doubling_val),
-            "Lactate_Glucose_Ratio": lac_glu_ratio,
-            "Metabolic_Load": metabolic_load,
-            "Culture_Stress_Index": stress_index,
-            "Day / Time": 1.0,
-            "Study_Reference_x": 0.0,
-            "Study_Reference_y": 0.0,
-        }
+        # Construct exact 15-element numeric vector in training feature order
+        X_np = np.array([[
+            0.0,                        # 0: Donor
+            float(tissue_val),          # 1: Tissue
+            float(ph_val),              # 2: pH
+            float(co2_val),             # 3: CO2 (%)
+            float(do_val),              # 4: DO
+            float(glucose_val),         # 5: Glucose
+            float(lactate_val),         # 6: Lactate
+            float(temp_val),            # 7: Temperature
+            float(agitation_val),       # 8: Agitation
+            float(seeding_val),         # 9: Seeding Density
+            float(cell_count_val),      # 10: Cell Count
+            float(pop_doubling_val),    # 11: Population Doubling
+            lac_glu_ratio,              # 12: Lactate_Glucose_Ratio
+            metabolic_load,             # 13: Metabolic_Load
+            stress_index                # 14: Culture_Stress_Index
+        ]], dtype=np.float32)
 
-        # Retrieve exact feature names required by trained XGBoost model
-        booster = model.get_booster()
-        expected_features = booster.feature_names
+        # Predict using DMatrix to bypass C++ columnar DataFrame validator
+        try:
+            dmat = xgb.DMatrix(X_np)
+            raw_prediction = float(model.get_booster().predict(dmat)[0])
+        except Exception:
+            raw_prediction = float(model.predict(X_np)[0])
 
-        if expected_features:
-            batch_dict = {f_name: [feature_val_map.get(f_name, 0.0)] for f_name in expected_features}
-            current_batch = pd.DataFrame(batch_dict)
-        else:
-            fallback_cols = [
-                "Donor", "Tissue", "pH", "CO2 (%)", "DO", "Glucose", "Lactate",
-                "Temperature (oC)", "Agitation (rpm)", "Seeding Density ( cells/mL)",
-                "Cell Count", "Population Doubling", "Lactate_Glucose_Ratio",
-                "Metabolic_Load", "Culture_Stress_Index"
-            ]
-            batch_dict = {f_name: [feature_val_map.get(f_name, 0.0)] for f_name in fallback_cols}
-            current_batch = pd.DataFrame(batch_dict)
-
-        current_batch = current_batch.astype(np.float64)
-
-        # Execute prediction
-        raw_prediction = float(model.predict(current_batch)[0])
-
-        # Model outputs percentage directly (e.g. 95.5 = 95.5%)
+        # Clamp viability prediction within valid 0.0% to 100.0% range
         predicted_viability_pct = max(0.0, min(100.0, raw_prediction))
 
         # Process Drift Detection
@@ -263,14 +243,18 @@ if predict_button:
         
         with st.spinner("Calculating local feature attributions..."):
             try:
+                clean_feature_names = [
+                    "Donor", "Tissue", "pH", "CO2 (%)", "DO", "Glucose", "Lactate",
+                    "Temperature (°C)", "Agitation (rpm)", "Seeding Density (cells/mL)",
+                    "Cell Count", "Population Doubling", "Lactate/Glucose Ratio",
+                    "Metabolic Load", "Culture Stress Index"
+                ]
+
                 explainer = shap.TreeExplainer(model)
-                shap_values = explainer(current_batch)
+                shap_values = explainer(X_np)
+                shap_values.feature_names = clean_feature_names
 
-                # Format clean feature names for waterfall visualization
-                clean_display_names = [f.replace("( cells/mL)", "(cells/mL)") for f in current_batch.columns]
-                shap_values.feature_names = clean_display_names
-
-                num_features = len(clean_display_names)
+                num_features = len(clean_feature_names)
                 fig_height = max(6, int(num_features * 0.45))
                 fig, ax = plt.subplots(figsize=(10, fig_height))
 
