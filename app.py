@@ -47,75 +47,49 @@ except Exception as e:
     st.error(f"❌ Model File Error: Please ensure 'xgboost_cqa_model.json' is present in your repository root. Detail: {str(e)}")
 
 # ==========================================
-# 3. CRASH-PROOF AUDIT LEDGER FUNCTION
+# 3. SANITIZED GOOGLE CREDENTIALS LOADING
 # ==========================================
-def log_to_audit_ledger(row_data, header_names):
-    """
-    Writes predictions to local CSV and syncs to Google Sheets.
-    Supports clean TOML dicts, escaped linebreaks, and Base64 fallbacks.
-    """
-    # 1. Append to local CSV ledger
-    ledger_file = "audit_ledger.csv"
-    try:
-        file_exists = os.path.exists(ledger_file)
-        ledger_df = pd.DataFrame([row_data], columns=header_names)
-        ledger_df.to_csv(ledger_file, mode='a', header=not file_exists, index=False)
-        local_success = True
-    except Exception:
-        local_success = False
+try:
+    target_input = st.secrets.get("sheet_url", DEFAULT_SHEET_URL)
+    sheet_id = extract_spreadsheet_id(target_input)
 
-    # 2. Sync to Google Sheets cloud ledger
-    cloud_success = False
-    cloud_msg = ""
-    sheet_id = "UNKNOWN_ID"
-    sa_email = "UNKNOWN_EMAIL"
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    # 1. Check if secrets exist
+    if "gcp_service_account" not in st.secrets:
+        raise ValueError("Missing 'gcp_service_account' block in Streamlit Secrets.")
 
-    try:
-        target_input = st.secrets.get("sheet_url", DEFAULT_SHEET_URL)
-        sheet_id = extract_spreadsheet_id(target_input)
+    # 2. Make a mutable dictionary copy (Streamlit secrets are read-only)
+    secret_dict = dict(st.secrets["gcp_service_account"])
 
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
+    # 3. Clean and sanitize the private key string
+    if "private_key" in secret_dict:
+        pk = str(secret_dict["private_key"]).strip()
         
-        secret_dict = None
+        # Replace escaped literal backslashes (\n) with real system newlines
+        pk = pk.replace("\\n", "\n")
+        
+        # Remove any surrounding wrapping quotes that may have been saved
+        pk = pk.strip('"').strip("'")
+        
+        secret_dict["private_key"] = pk
 
-        if "gcp_service_account" in st.secrets:
-            secret_dict = dict(st.secrets["gcp_service_account"])
-            if "private_key" in secret_dict:
-                pk = str(secret_dict["private_key"]).replace("\\n", "\n")
-                secret_dict["private_key"] = pk
-        elif "gcp_service_account_b64" in st.secrets:
-            raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
-            raw_b64 = re.sub(r'\s+', '', raw_b64).replace("&", "+")
-            missing_padding = len(raw_b64) % 4
-            if missing_padding:
-                raw_b64 += '=' * (4 - missing_padding)
-            
-            json_bytes = base64.b64decode(raw_b64)
-            json_str = json_bytes.decode("utf-8", errors="ignore").strip()
-            if "}" in json_str:
-                json_str = json_str[:json_str.rfind("}") + 1]
-            secret_dict = json.loads(json_str)
-            if "private_key" in secret_dict:
-                secret_dict["private_key"] = str(secret_dict["private_key"]).replace("\\n", "\n")
-        else:
-            raise ValueError("No GCP credentials found in Streamlit Secrets.")
+    # 4. Authenticate service account
+    sa_email = secret_dict.get("client_email", "Unknown Email")
+    creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
+    client = gspread.authorize(creds)
 
-        sa_email = secret_dict.get("client_email", "Unknown Email")
-        creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
-        client = gspread.authorize(creds)
+    # 5. Write to target Google Sheet
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.sheet1
+    worksheet.append_row(row_data)
+    cloud_success = True
 
-        spreadsheet = client.open_by_key(sheet_id)
-        worksheet = spreadsheet.sheet1
-        worksheet.append_row(row_data)
-        cloud_success = True
-
-    except Exception as e:
-        cloud_msg = f"{type(e).__name__}: {str(e)} | Target Sheet ID: [{sheet_id}] | Shared with: [{sa_email}]"
-
-    return local_success, cloud_success, cloud_msg
+except Exception as e:
+    cloud_msg = f"{type(e).__name__}: {str(e)} | Target Sheet ID: [{sheet_id}] | Shared with: [{sa_email}]"
 
 # ==========================================
 # 4. OPERATOR INPUT PANEL (SIDEBAR)
