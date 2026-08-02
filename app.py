@@ -84,12 +84,11 @@ def log_to_audit_ledger(row_data, header_names):
         if "gcp_service_account" in st.secrets:
             secret_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in secret_dict:
-                # Handle both raw multiline strings and escaped '\n'
                 pk = str(secret_dict["private_key"]).replace("\\n", "\n")
                 secret_dict["private_key"] = pk
         elif "gcp_service_account_b64" in st.secrets:
             raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
-            raw_b64 = raw_b64.replace("&", "+")
+            raw_b64 = re.sub(r'\s+', '', raw_b64).replace("&", "+")
             missing_padding = len(raw_b64) % 4
             if missing_padding:
                 raw_b64 += '=' * (4 - missing_padding)
@@ -266,11 +265,9 @@ if predict_button:
                 booster = model.get_booster()
                 explainer = shap.TreeExplainer(booster)
                 
-                # Extract the specific explanation slice
                 exp = explainer(X_np)[0]
                 exp.feature_names = clean_feature_names
 
-                # Scale directly on the slice if prediction was in decimal format
                 if is_decimal_scale:
                     exp.values = exp.values * 100.0
                     if hasattr(exp, "base_values"):
@@ -278,12 +275,11 @@ if predict_button:
 
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
-                # Format to 3 decimal places so small feature impacts don't get rounded down to +0
+                # Standard compatible call across all SHAP versions
                 shap.plots.waterfall(
                     exp, 
                     max_display=len(clean_feature_names), 
-                    show=False,
-                    text_format="{:+.3f}"
+                    show=False
                 )
                 
                 plt.tight_layout()
