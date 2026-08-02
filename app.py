@@ -52,7 +52,7 @@ except Exception as e:
 def log_to_audit_ledger(row_data, header_names):
     """
     Writes predictions to local CSV and syncs to Google Sheets.
-    Includes defensive JSON slicing to prevent JSONDecodeError crashes.
+    Includes robust GCP credential extraction supporting both TOML dict & Base64.
     """
     # 1. Append to local CSV ledger
     ledger_file = "audit_ledger.csv"
@@ -87,11 +87,15 @@ def log_to_audit_ledger(row_data, header_names):
                 secret_dict["private_key"] = str(secret_dict["private_key"]).replace("\\n", "\n")
         elif "gcp_service_account_b64" in st.secrets:
             raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
+            # Auto-heal corrupted '&' symbol into '+'
+            raw_b64 = raw_b64.replace("&", "+")
             json_bytes = base64.b64decode(raw_b64)
             json_str = json_bytes.decode("utf-8", errors="ignore").strip()
             if "}" in json_str:
                 json_str = json_str[:json_str.rfind("}") + 1]
             secret_dict = json.loads(json_str)
+            if "private_key" in secret_dict:
+                secret_dict["private_key"] = str(secret_dict["private_key"]).replace("\\n", "\n")
         else:
             raise ValueError("No GCP credentials found in Streamlit Secrets.")
 
@@ -119,7 +123,7 @@ ph_val = st.sidebar.number_input("pH", value=7.20, format="%.2f")
 do_val = st.sidebar.number_input("Dissolved Oxygen (%)", value=50.00, format="%.2f")
 glucose_val = st.sidebar.number_input("Glucose (mM)", value=10.00, format="%.2f")
 lactate_val = st.sidebar.number_input("Lactate (mM)", value=15.00, format="%.2f")
-temp_val = st.sidebar.number_input("Temperature (oC)", value=37.00, format="%.2f")
+temp_val = st.sidebar.number_input("Temperature (°C)", value=37.00, format="%.2f")
 co2_val = st.sidebar.number_input("CO2 (%)", value=5.00, format="%.2f")
 agitation_val = st.sidebar.number_input("Agitation (rpm)", value=100.00, format="%.2f")
 seeding_val = st.sidebar.number_input("Seeding Density (cells/mL)", value=10000.00, format="%.2f")
@@ -141,8 +145,15 @@ if predict_button:
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        # Construct exact 15-element numeric vector in training feature order
-        X_np = np.array([[
+        feature_names = [
+            "Donor", "Tissue", "pH", "CO2 (%)", "DO", "Glucose", "Lactate",
+            "Temperature (°C)", "Agitation (rpm)", "Seeding Density (cells/mL)",
+            "Cell Count", "Population Doubling", "Lactate_Glucose_Ratio",
+            "Metabolic_Load", "Culture_Stress_Index"
+        ]
+
+        # Construct exact 15-element feature vector
+        raw_inputs = [[
             0.0,                        # 0: Donor
             float(tissue_val),          # 1: Tissue
             float(ph_val),              # 2: pH
@@ -158,14 +169,20 @@ if predict_button:
             lac_glu_ratio,              # 12: Lactate_Glucose_Ratio
             metabolic_load,             # 13: Metabolic_Load
             stress_index                # 14: Culture_Stress_Index
-        ]], dtype=np.float32)
+        ]]
 
-        # Predict using DMatrix to bypass C++ columnar DataFrame validator
+        X_df = pd.DataFrame(raw_inputs, columns=feature_names)
+
+        # Predict viability
         try:
-            dmat = xgb.DMatrix(X_np)
+            dmat = xgb.DMatrix(X_df)
             raw_prediction = float(model.get_booster().predict(dmat)[0])
         except Exception:
-            raw_prediction = float(model.predict(X_np)[0])
+            raw_prediction = float(model.predict(X_df)[0])
+
+        # Auto-convert decimal predictions (0.0 to 1.0) to percentage scale (0% to 100%)
+        if 0.0 <= raw_prediction <= 1.0:
+            raw_prediction = raw_prediction * 100.0
 
         # Clamp viability prediction within valid 0.0% to 100.0% range
         predicted_viability_pct = max(0.0, min(100.0, raw_prediction))
@@ -243,29 +260,23 @@ if predict_button:
         
         with st.spinner("Calculating local feature attributions..."):
             try:
-                clean_feature_names = [
-                    "Donor", "Tissue", "pH", "CO2 (%)", "DO", "Glucose", "Lactate",
-                    "Temperature (°C)", "Agitation (rpm)", "Seeding Density (cells/mL)",
-                    "Cell Count", "Population Doubling", "Lactate/Glucose Ratio",
-                    "Metabolic Load", "Culture Stress Index"
-                ]
+                # Force-clear figure state to prevent dynamic plots from displaying stale outputs
+                plt.close('all')
 
                 explainer = shap.TreeExplainer(model)
-                shap_values = explainer(X_np)
-                shap_values.feature_names = clean_feature_names
+                shap_values = explainer(X_df)
 
-                num_features = len(clean_feature_names)
-                fig_height = max(6, int(num_features * 0.45))
-                fig, ax = plt.subplots(figsize=(10, fig_height))
-
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
                 shap.plots.waterfall(
                     shap_values[0], 
-                    max_display=num_features, 
+                    max_display=len(feature_names), 
                     show=False
                 )
                 
                 plt.tight_layout()
                 st.pyplot(fig)
+                plt.close(fig)
             except Exception as shap_error:
                 st.error(f"Visualizer Notice: Prediction succeeded, but SHAP generation skipped: {str(shap_error)}")
 
