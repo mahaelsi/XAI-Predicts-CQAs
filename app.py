@@ -52,7 +52,7 @@ except Exception as e:
 def log_to_audit_ledger(row_data, header_names):
     """
     Writes predictions to local CSV and syncs to Google Sheets.
-    Includes auto-padding Base64 repair to prevent PEM length crashes.
+    Supports clean TOML dicts, escaped linebreaks, and Base64 fallbacks.
     """
     # 1. Append to local CSV ledger
     ledger_file = "audit_ledger.csv"
@@ -84,12 +84,12 @@ def log_to_audit_ledger(row_data, header_names):
         if "gcp_service_account" in st.secrets:
             secret_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in secret_dict:
-                secret_dict["private_key"] = str(secret_dict["private_key"]).replace("\\n", "\n")
+                # Handle both raw multiline strings and escaped '\n'
+                pk = str(secret_dict["private_key"]).replace("\\n", "\n")
+                secret_dict["private_key"] = pk
         elif "gcp_service_account_b64" in st.secrets:
             raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
-            # Auto-heal corrupted '&' symbol into '+'
             raw_b64 = raw_b64.replace("&", "+")
-            # Auto-repair Base64 length padding (modulus 4)
             missing_padding = len(raw_b64) % 4
             if missing_padding:
                 raw_b64 += '=' * (4 - missing_padding)
@@ -263,26 +263,27 @@ if predict_button:
             try:
                 plt.close('all')
 
-                # Pass underlying native Booster directly to SHAP TreeExplainer
                 booster = model.get_booster()
                 explainer = shap.TreeExplainer(booster)
-                shap_values = explainer(X_np)
+                
+                # Extract the specific explanation slice
+                exp = explainer(X_np)[0]
+                exp.feature_names = clean_feature_names
 
-                # Attach feature names
-                shap_values.feature_names = clean_feature_names
-
-                # Scale SHAP attributions to match percentage scale if raw prediction was decimal
+                # Scale directly on the slice if prediction was in decimal format
                 if is_decimal_scale:
-                    shap_values.values = shap_values.values * 100.0
-                    if hasattr(shap_values, "base_values"):
-                        shap_values.base_values = shap_values.base_values * 100.0
+                    exp.values = exp.values * 100.0
+                    if hasattr(exp, "base_values"):
+                        exp.base_values = exp.base_values * 100.0
 
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
+                # Format to 3 decimal places so small feature impacts don't get rounded down to +0
                 shap.plots.waterfall(
-                    shap_values[0], 
+                    exp, 
                     max_display=len(clean_feature_names), 
-                    show=False
+                    show=False,
+                    text_format="{:+.3f}"
                 )
                 
                 plt.tight_layout()
