@@ -218,7 +218,7 @@ if predict_button:
             float(seeding_val), "Adipose" if tissue_val == 1.0 else "BoneMarrow",
             float(glucose_val), float(lactate_val)
         ]
-def log_to_audit_ledger(...)
+            def log_to_audit_ledger(...):
         with st.spinner("Recording entry in append-only audit ledger..."):
             local_ok, cloud_ok, cloud_err = log_to_audit_ledger(audit_row, ledger_headers)
 
