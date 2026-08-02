@@ -11,7 +11,6 @@ import os
 import json
 import base64
 import re
-from audit import log_to_audit_ledger  # Replace 'audit' with your module's filename
 
 # ==========================================
 # 1. PAGE INITIALIZATION & CONFIGURATION
