@@ -145,15 +145,15 @@ if predict_button:
         metabolic_load = float(round((lactate_val * cell_count_val) / 1e6, 4))
         stress_index = float(round(abs(ph_val - 7.2) + abs(temp_val - 37.0) + abs(co2_val - 5.0), 4))
 
-        feature_names = [
+        clean_feature_names = [
             "Donor", "Tissue", "pH", "CO2 (%)", "DO", "Glucose", "Lactate",
             "Temperature (°C)", "Agitation (rpm)", "Seeding Density (cells/mL)",
-            "Cell Count", "Population Doubling", "Lactate_Glucose_Ratio",
-            "Metabolic_Load", "Culture_Stress_Index"
+            "Cell Count", "Population Doubling", "Lactate/Glucose Ratio",
+            "Metabolic Load", "Culture Stress Index"
         ]
 
-        # Construct exact 15-element feature vector
-        raw_inputs = [[
+        # Construct exact 15-element numeric array
+        X_np = np.array([[
             0.0,                        # 0: Donor
             float(tissue_val),          # 1: Tissue
             float(ph_val),              # 2: pH
@@ -169,16 +169,14 @@ if predict_button:
             lac_glu_ratio,              # 12: Lactate_Glucose_Ratio
             metabolic_load,             # 13: Metabolic_Load
             stress_index                # 14: Culture_Stress_Index
-        ]]
+        ]], dtype=np.float32)
 
-        X_df = pd.DataFrame(raw_inputs, columns=feature_names)
-
-        # Predict viability
+        # Predict viability using NumPy array to bypass feature-name mismatch errors
         try:
-            dmat = xgb.DMatrix(X_df)
-            raw_prediction = float(model.get_booster().predict(dmat)[0])
+            raw_prediction = float(model.predict(X_np)[0])
         except Exception:
-            raw_prediction = float(model.predict(X_df)[0])
+            dmat = xgb.DMatrix(X_np)
+            raw_prediction = float(model.get_booster().predict(dmat)[0])
 
         # Auto-convert decimal predictions (0.0 to 1.0) to percentage scale (0% to 100%)
         if 0.0 <= raw_prediction <= 1.0:
@@ -260,17 +258,20 @@ if predict_button:
         
         with st.spinner("Calculating local feature attributions..."):
             try:
-                # Force-clear figure state to prevent dynamic plots from displaying stale outputs
+                # Clear previous plot states to prevent stale visual caching
                 plt.close('all')
 
                 explainer = shap.TreeExplainer(model)
-                shap_values = explainer(X_df)
+                shap_values = explainer(X_np)
+
+                # Dynamically apply clean labels to the SHAP explanation object
+                shap_values.feature_names = clean_feature_names
 
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
                 shap.plots.waterfall(
                     shap_values[0], 
-                    max_display=len(feature_names), 
+                    max_display=len(clean_feature_names), 
                     show=False
                 )
                 
