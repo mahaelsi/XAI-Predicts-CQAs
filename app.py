@@ -52,7 +52,7 @@ except Exception as e:
 def log_to_audit_ledger(row_data, header_names):
     """
     Writes predictions to local CSV and syncs to Google Sheets.
-    Includes robust GCP credential extraction supporting both TOML dict & Base64.
+    Includes auto-padding Base64 repair to prevent PEM length crashes.
     """
     # 1. Append to local CSV ledger
     ledger_file = "audit_ledger.csv"
@@ -89,6 +89,11 @@ def log_to_audit_ledger(row_data, header_names):
             raw_b64 = str(st.secrets["gcp_service_account_b64"]).strip().strip('"').strip("'")
             # Auto-heal corrupted '&' symbol into '+'
             raw_b64 = raw_b64.replace("&", "+")
+            # Auto-repair Base64 length padding (modulus 4)
+            missing_padding = len(raw_b64) % 4
+            if missing_padding:
+                raw_b64 += '=' * (4 - missing_padding)
+            
             json_bytes = base64.b64decode(raw_b64)
             json_str = json_bytes.decode("utf-8", errors="ignore").strip()
             if "}" in json_str:
@@ -152,7 +157,7 @@ if predict_button:
             "Metabolic Load", "Culture Stress Index"
         ]
 
-        # Construct exact 15-element numeric array
+        # Construct exact 15-element numeric input vector
         X_np = np.array([[
             0.0,                        # 0: Donor
             float(tissue_val),          # 1: Tissue
@@ -171,19 +176,17 @@ if predict_button:
             stress_index                # 14: Culture_Stress_Index
         ]], dtype=np.float32)
 
-        # Predict viability using NumPy array to bypass feature-name mismatch errors
+        # Predict viability using Booster to bypass feature-name mismatches
         try:
-            raw_prediction = float(model.predict(X_np)[0])
-        except Exception:
             dmat = xgb.DMatrix(X_np)
             raw_prediction = float(model.get_booster().predict(dmat)[0])
+        except Exception:
+            raw_prediction = float(model.predict(X_np)[0])
 
-        # Auto-convert decimal predictions (0.0 to 1.0) to percentage scale (0% to 100%)
-        if 0.0 <= raw_prediction <= 1.0:
-            raw_prediction = raw_prediction * 100.0
-
-        # Clamp viability prediction within valid 0.0% to 100.0% range
-        predicted_viability_pct = max(0.0, min(100.0, raw_prediction))
+        # Convert decimal predictions (0.0 to 1.0) to percentage scale (0% to 100%)
+        is_decimal_scale = (0.0 <= raw_prediction <= 1.0)
+        predicted_viability_pct = raw_prediction * 100.0 if is_decimal_scale else raw_prediction
+        predicted_viability_pct = max(0.0, min(100.0, predicted_viability_pct))
 
         # Process Drift Detection
         drift_reasons = []
@@ -258,14 +261,21 @@ if predict_button:
         
         with st.spinner("Calculating local feature attributions..."):
             try:
-                # Clear previous plot states to prevent stale visual caching
                 plt.close('all')
 
-                explainer = shap.TreeExplainer(model)
+                # Pass underlying native Booster directly to SHAP TreeExplainer
+                booster = model.get_booster()
+                explainer = shap.TreeExplainer(booster)
                 shap_values = explainer(X_np)
 
-                # Dynamically apply clean labels to the SHAP explanation object
+                # Attach feature names
                 shap_values.feature_names = clean_feature_names
+
+                # Scale SHAP attributions to match percentage scale if raw prediction was decimal
+                if is_decimal_scale:
+                    shap_values.values = shap_values.values * 100.0
+                    if hasattr(shap_values, "base_values"):
+                        shap_values.base_values = shap_values.base_values * 100.0
 
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
