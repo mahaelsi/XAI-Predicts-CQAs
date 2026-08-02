@@ -203,7 +203,6 @@ if predict_button:
             st.metric(label="Predicted Viability", value=f"{predicted_viability_pct:.2f}%")
             st.caption(f"Risk Evaluation: **{risk}**")
 
-        def log_to_audit_ledger(...)
         # Audit ledger logging (Google Sheets & Local CSV)
         ledger_headers = [
             "Timestamp", "Operator", "Predicted_Viability", "Risk_Evaluation",
